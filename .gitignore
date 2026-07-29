@@ -1,0 +1,9 @@
+node_modules/
+server/data/db.json
+server/data/db.json.tmp
+server/.env
+client/.env.local
+dist/
+*.log
+.DS_Store
+.claude/settings.local.json
