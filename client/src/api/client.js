@@ -42,6 +42,7 @@ export const api = {
   login: (email, password) => request('POST', '/auth/login', { email, password }),
   me: () => request('GET', '/auth/me'),
   googleStatus: () => request('GET', '/auth/google/status'),
+  exchangeGoogleCode: (code) => request('POST', '/auth/google/exchange', { code }),
   changePassword: (currentPassword, newPassword) =>
     request('POST', '/auth/change-password', { currentPassword, newPassword }),
   setRole: (role) => request('POST', '/auth/set-role', { role }),
@@ -70,9 +71,13 @@ export const api = {
   deleteTask: (id) => request('DELETE', `/tasks/${id}`),
   addDraft: (id, b) => request('POST', `/tasks/${id}/drafts`, b),
   updateDraft: (id, draftId, b) => request('PATCH', `/tasks/${id}/drafts/${draftId}`, b),
+  deleteDraft: (id, draftId) => request('DELETE', `/tasks/${id}/drafts/${draftId}`),
   logHours: (id, b) => request('POST', `/tasks/${id}/log-hours`, b),
   addAttachment: (id, b) => request('POST', `/tasks/${id}/attachments`, b),
   deleteAttachment: (id, attId) => request('DELETE', `/tasks/${id}/attachments/${attId}`),
+  taskUpdates: (id) => request('GET', `/tasks/${id}/updates`),
+  addTaskUpdate: (id, b) => request('POST', `/tasks/${id}/updates`, b),
+  deleteTaskUpdate: (id, updateId) => request('DELETE', `/tasks/${id}/updates/${updateId}`),
 
   // chat
   conversations: () => request('GET', '/chat/conversations'),

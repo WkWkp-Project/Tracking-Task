@@ -1,112 +1,227 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  AlertTriangle, BriefcaseBusiness, CalendarClock,
+  Clock3, ListChecks, RefreshCw, Sparkles, UsersRound,
+} from 'lucide-react';
 import api from '../../api/client.js';
 import { Avatar, Spinner } from '../ui.jsx';
-import { riskStyle, daysLeftText } from '../../utils.js';
-import { StatCard, SectionCard, PersonRow } from './DashboardParts.jsx';
+import { SectionCard } from './DashboardParts.jsx';
+import BrandProjectCards from './BrandProjectCards.jsx';
 
-const ACTIVE_STATUSES = ['To Do', 'Draft 1', 'Draft 2', 'Final', 'Client Review', 'Approval'];
-const RISK_BAR = { Critical: 'bg-red-500', High: 'bg-orange-500', Medium: 'bg-amber-400', Low: 'bg-emerald-400', Done: 'bg-gray-300' };
+const ACTIVE = new Set(['To Do', 'Draft 1', 'Draft 2', 'Final', 'Client Review', 'Approval']);
 
-export default function PMDashboard({ users, projects }) {
+function taskProgress(task) {
+  if (task.status === 'Done') return 100;
+  const drafts = task.drafts || [];
+  const estimated = drafts.reduce((sum, draft) => sum + (Number(draft.estDays) || 0) * 8 + (Number(draft.estHours) || 0), 0);
+  const logged = drafts.reduce((sum, draft) => sum + (Number(draft.loggedHours) || 0), 0);
+  if (estimated > 0) return Math.min(99, Math.round((logged / estimated) * 100));
+  const taskEstimate = Number(task.estimatedHours) || 0;
+  return taskEstimate > 0 ? Math.min(99, Math.round(((Number(task.loggedHours) || 0) / taskEstimate) * 100)) : 0;
+}
+
+function dangerScore(task) {
+  const level = { Critical: 1000, High: 700, Medium: 250, Low: 0 }[task.risk?.level] || 0;
+  const priority = { high: 400, normal: 50, low: 0 }[task.priority] || 0;
+  const days = task.risk?.calendarDaysLeft;
+  const deadline = Number.isFinite(days) ? Math.max(0, 30 - days) * 5 : 0;
+  return level + priority + deadline;
+}
+
+function taskSignal(task) {
+  const level = task.risk?.level || 'Low';
+  const days = task.risk?.calendarDaysLeft;
+  if ((days ?? 99) < 0) return { label: `เลยกำหนด ${Math.abs(days)} วัน`, tone: 'danger' };
+  if (level === 'Critical') return { label: 'วิกฤต', tone: 'danger' };
+  if (level === 'High') return { label: days <= 1 ? `เหลือ ${Math.max(0, days)} วัน` : 'เสี่ยงสูง', tone: 'warn' };
+  if (task.priority === 'high') return { label: 'Priority สูง', tone: 'warn' };
+  if (days <= 7) return { label: `ส่งใน ${Math.max(0, days)} วัน`, tone: 'soon' };
+  return { label: 'ตามแผน', tone: 'normal' };
+}
+
+const signalTone = {
+  danger: 'bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-300 border-red-200 dark:border-red-900',
+  warn: 'bg-orange-50 dark:bg-orange-950/40 text-orange-600 dark:text-orange-300 border-orange-200 dark:border-orange-900',
+  soon: 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-300 border-amber-200 dark:border-amber-900',
+  normal: 'bg-gray-50 dark:bg-zinc-800 text-gray-500 dark:text-zinc-300 border-gray-200 dark:border-zinc-700',
+};
+
+export default function PMDashboard({ users, projects, onOpenTask, onOpenProject, onManageBrands, onNewProject }) {
   const [tasks, setTasks] = useState(null);
   const [loadedAt, setLoadedAt] = useState(null);
 
-  const load = async () => {
-    const { tasks } = await api.tasks();
-    setTasks(tasks);
+  const load = useCallback(async () => {
+    const { tasks: rows } = await api.tasks();
+    setTasks(rows);
     setLoadedAt(new Date());
-  };
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
-  const projectById = useMemo(() => Object.fromEntries((projects || []).map((p) => [p.id, p])), [projects]);
-  const pms = useMemo(() => (users || []).filter((u) => u.role === 'pm' || u.role === 'admin'), [users]);
-
-  const stats = useMemo(() => {
+  const model = useMemo(() => {
     if (!tasks) return null;
-    const active = tasks.filter((t) => ACTIVE_STATUSES.includes(t.status));
-    const overdue = active.filter((t) => (t.risk?.calendarDaysLeft ?? 1) < 0);
-    const critHigh = active.filter((t) => ['Critical', 'High'].includes(t.risk?.level));
-    const avgOnTime = active.length
-      ? Math.round((active.reduce((s, t) => s + (t.risk?.onTimeProbability || 0), 0) / active.length) * 100)
-      : 100;
+    const active = tasks.filter((task) => ACTIVE.has(task.status));
+    const projectById = Object.fromEntries((projects || []).map((project) => [project.id, project]));
+    const actionQueue = [...active]
+      .sort((a, b) => dangerScore(b) - dangerScore(a) || (a.endDate || '').localeCompare(b.endDate || ''))
+      .slice(0, 6);
 
-    const byPm = pms.map((pm) => {
-      const mine = active.filter((t) => t.pmId === pm.id);
-      const segments = ['Critical', 'High', 'Medium', 'Low'].map((lvl) => ({
-        label: lvl, color: RISK_BAR[lvl], count: mine.filter((t) => t.risk?.level === lvl).length,
-      }));
-      return {
-        person: pm, total: mine.length, segments,
-        critical: mine.filter((t) => t.risk?.level === 'Critical').length,
-        high: mine.filter((t) => t.risk?.level === 'High').length,
-        overdue: mine.filter((t) => (t.risk?.calendarDaysLeft ?? 1) < 0).length,
-      };
-    }).sort((a, b) => b.total - a.total);
+    const workload = (users || [])
+      .filter((person) => !person.disabled && !['admin', 'pm', 'ae'].includes(person.role))
+      .map((person) => {
+        const mine = active.filter((task) => task.assigneeId === person.id);
+        const dailyDemand = mine.reduce((sum, task) => {
+          const days = Math.max(1, Number(task.risk?.workdaysLeft) || 1);
+          return sum + (Number(task.risk?.expectedRemainingHours) || 0) / days;
+        }, 0);
+        const capacity = Number(person.capacityHoursPerDay) || 8;
+        return { person, count: mine.length, percent: Math.min(140, Math.round((dailyDemand / capacity) * 100)) };
+      })
+      .filter((row) => row.count > 0)
+      .sort((a, b) => b.percent - a.percent);
 
-    const topRisk = [...critHigh]
-      .sort((a, b) => (a.risk?.calendarDaysLeft ?? 0) - (b.risk?.calendarDaysLeft ?? 0))
-      .slice(0, 8);
+    const dangerCount = active.filter((task) =>
+      ['Critical', 'High'].includes(task.risk?.level) || (task.risk?.calendarDaysLeft ?? 1) < 0
+    ).length;
+    const dueSoonCount = active.filter((task) => {
+      const days = task.risk?.calendarDaysLeft;
+      return Number.isFinite(days) && days >= 0 && days <= 7;
+    }).length;
+    const overloadedCount = workload.filter((row) => row.percent > 100).length;
+    const activeProjectCount = new Set(active.map((task) => task.projectId)).size;
 
-    return { active, overdue, critHigh, avgOnTime, byPm, topRisk };
-  }, [tasks, pms]);
+    return {
+      actionQueue, workload, projectById,
+      dangerCount, dueSoonCount, overloadedCount, activeProjectCount,
+    };
+  }, [tasks, users, projects]);
 
-  if (!stats) return <Spinner label="กำลังสรุปข้อมูล PM…" />;
+  if (!model) return <Spinner label="กำลังเตรียม Dashboard…" />;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-gray-400">
-          อัปเดตล่าสุด {loadedAt?.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
-        </p>
-        <button onClick={load} className="flex items-center gap-1.5 text-xs font-bold text-gray-500 hover:text-blue-600 border border-gray-200 hover:border-blue-300 rounded-lg px-2.5 py-1.5">
-          <RefreshCw size={13} /> รีเฟรช
+    <div className="space-y-5 max-w-[1500px] mx-auto">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-bold text-blue-600 flex items-center gap-1"><Sparkles size={13} /> PM OVERVIEW</p>
+          <h2 className="text-2xl font-bold text-gray-950 dark:text-white mt-1">ภาพรวมที่ต้องตัดสินใจวันนี้</h2>
+          <p className="text-xs text-gray-400 mt-1">อัปเดต {loadedAt?.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} · ตัวเลขทั้งหมดคำนวณจากงานที่ยังไม่ปิด</p>
+        </div>
+        <button onClick={load} className="w-9 h-9 grid place-items-center rounded-xl border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-gray-500 hover:text-blue-600" aria-label="รีเฟรช dashboard">
+          <RefreshCw size={15} />
         </button>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        <StatCard label="งาน PM ที่กำลังทำ" value={stats.active.length} tone="info" />
-        <StatCard label="เสี่ยงสูง/วิกฤต" value={stats.critHigh.length} tone={stats.critHigh.length ? 'danger' : 'ok'} />
-        <StatCard label="เลยกำหนด" value={stats.overdue.length} tone={stats.overdue.length ? 'danger' : 'ok'} sub={`เฉลี่ยเสร็จทัน ${stats.avgOnTime}%`} />
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+        <OverviewMetric label="งานเสี่ยง" value={model.dangerCount} detail="วิกฤตหรือเสี่ยงสูง" tone="red" icon={<AlertTriangle size={15} />} />
+        <OverviewMetric label="ส่งภายใน 7 วัน" value={model.dueSoonCount} detail="ไม่นับงานที่ปิดแล้ว" tone="amber" icon={<CalendarClock size={15} />} />
+        <OverviewMetric label="คนที่งานล้น" value={model.overloadedCount} detail="มากกว่า 100% capacity" tone="violet" icon={<UsersRound size={15} />} />
+        <OverviewMetric label="โปรเจกต์ที่กำลังเดิน" value={model.activeProjectCount} detail="มีงานที่ยังไม่ปิด" tone="blue" icon={<BriefcaseBusiness size={15} />} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <SectionCard title="งานฝั่ง PM ต่อคน" subtitle="โปรเจกต์/งานที่แต่ละ PM ดูแลอยู่ตอนนี้">
-          {stats.byPm.length === 0 ? (
-            <p className="text-xs text-gray-400 text-center py-6">ยังไม่มี PM ในระบบ</p>
-          ) : stats.byPm.map((row) => (
-            <PersonRow key={row.person.id} person={row.person} total={row.total} segments={row.segments}
-              chips={[
-                row.critical > 0 && <span key="c" className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-700">วิกฤต {row.critical}</span>,
-                row.high > 0 && <span key="h" className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700">เสี่ยงสูง {row.high}</span>,
-                row.overdue > 0 && <span key="o" className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-200 text-gray-700">เลยกำหนด {row.overdue}</span>,
-              ].filter(Boolean)} />
-          ))}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
+        <SectionCard
+          title="งานที่ต้องจัดการก่อน"
+          subtitle="เรียงจากความเสี่ยง Priority และกำหนดส่ง"
+          icon={<ListChecks size={17} className="text-blue-600" />}
+          className="md:col-span-2"
+        >
+          <div className="space-y-2">
+            {model.actionQueue.length === 0 ? <Empty text="ไม่มีงานค้างที่ต้องจัดการ" /> : model.actionQueue.map((task, index) => (
+              <ActionTask
+                key={task.id}
+                index={index}
+                task={task}
+                person={users.find((person) => person.id === task.assigneeId)}
+                project={model.projectById[task.projectId]}
+                onOpen={() => onOpenTask?.(task.id)}
+              />
+            ))}
+          </div>
         </SectionCard>
 
-        <SectionCard title="งานเสี่ยงสูงสุด (PM)" subtitle="เรียงตามวันที่เหลือน้อยที่สุด">
-          {stats.topRisk.length === 0 ? (
-            <p className="text-xs text-gray-400 text-center py-6 flex items-center justify-center gap-1.5"><CheckCircle2 size={14} className="text-emerald-500" /> ไม่มีงานเสี่ยงตอนนี้</p>
-          ) : (
-            <div className="space-y-2">
-              {stats.topRisk.map((t) => {
-                const rs = riskStyle(t.risk?.level);
-                const assignee = (users || []).find((u) => u.id === t.assigneeId);
-                const proj = projectById[t.projectId];
-                return (
-                  <div key={t.id} className="flex items-center gap-2 text-xs">
-                    {t.risk?.level === 'Critical' ? <AlertCircle size={14} className="text-red-500 shrink-0" /> : <AlertTriangle size={14} className={`${rs.dot} shrink-0`} />}
-                    <span className="font-bold text-gray-800 truncate flex-1">{t.title}</span>
-                    <span className="text-gray-400 truncate max-w-[100px] hidden sm:block">{proj?.brand}</span>
-                    <Avatar user={assignee} size={18} title={assignee?.name} />
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${rs.chip}`}>{daysLeftText(t.risk?.calendarDaysLeft)}</span>
+        <SectionCard
+          title="ภาระทีม"
+          subtitle="เรียงจากคนที่รับงานเกินกำลังก่อน"
+          icon={<UsersRound size={17} className="text-teal-500" />}
+        >
+          <div className="space-y-4">
+            {model.workload.length === 0 ? <Empty text="ยังไม่มีสมาชิกที่ถืองาน" /> : model.workload.map(({ person, count, percent }) => (
+              <div key={person.id}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Avatar user={person} size={27} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-gray-800 dark:text-zinc-100 truncate">{person.name}</p>
+                    <p className="text-[9px] text-gray-400">{count} งานที่ยังไม่ปิด</p>
                   </div>
-                );
-              })}
-            </div>
-          )}
+                  <span className={`text-xs font-black tabular-nums ${percent > 100 ? 'text-red-500' : percent > 80 ? 'text-amber-500' : 'text-emerald-500'}`}>{percent}%</span>
+                </div>
+                <div className="h-2 rounded-full bg-gray-100 dark:bg-zinc-800 overflow-hidden">
+                  <div className={`h-full rounded-full ${percent > 100 ? 'bg-red-500' : percent > 80 ? 'bg-amber-400' : 'bg-teal-500'}`} style={{ width: `${Math.min(100, percent)}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
         </SectionCard>
       </div>
+
+      <BrandProjectCards
+        mode="pm"
+        projects={projects}
+        onOpenProject={onOpenProject}
+        onManageBrands={onManageBrands}
+        onNewProject={onNewProject}
+      />
     </div>
   );
+}
+
+function OverviewMetric({ label, value, detail, tone, icon }) {
+  const tones = {
+    red: 'text-red-600 dark:text-red-300 bg-red-50 dark:bg-red-950/30 border-red-100 dark:border-red-900',
+    amber: 'text-amber-600 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border-amber-100 dark:border-amber-900',
+    violet: 'text-violet-600 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/30 border-violet-100 dark:border-violet-900',
+    blue: 'text-blue-600 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/30 border-blue-100 dark:border-blue-900',
+  };
+  return (
+    <div className={`rounded-2xl border p-4 ${tones[tone]}`}>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] font-bold uppercase tracking-wide opacity-80">{label}</p>
+        {icon}
+      </div>
+      <p className="text-3xl font-black mt-1 tabular-nums">{value}</p>
+      <p className="text-[10px] opacity-70 mt-0.5">{detail}</p>
+    </div>
+  );
+}
+
+function ActionTask({ index, task, person, project, onOpen }) {
+  const progress = taskProgress(task);
+  const signal = taskSignal(task);
+  return (
+    <button onClick={onOpen} className="w-full text-left flex gap-2.5 items-center px-3 py-2.5 rounded-xl border border-gray-100 dark:border-zinc-800 hover:border-blue-200 dark:hover:border-blue-900 hover:bg-blue-50/30 dark:hover:bg-blue-950/20 transition-colors">
+      <span className="w-5 shrink-0 text-[10px] font-black text-gray-300 dark:text-zinc-600 tabular-nums">#{index + 1}</span>
+      <span className="shrink-0"><Avatar user={person} size={32} /></span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 min-w-0">
+          <p className="text-sm font-bold text-gray-900 dark:text-zinc-100 truncate">{task.title}</p>
+          <span className={`shrink-0 px-2 py-0.5 rounded-full border text-[9px] font-bold ${signalTone[signal.tone]}`}>{signal.label}</span>
+        </div>
+        <p className="text-[10px] text-gray-400 truncate mt-0.5">{project?.brand || 'ไม่ระบุโปรเจกต์'} · {person?.name || 'ยังไม่ระบุผู้รับผิดชอบ'} · ส่ง {task.endDate || '—'}</p>
+        <Progress value={progress} className="mt-2" />
+      </div>
+      <span className="ml-auto w-8 shrink-0 text-right text-[10px] font-black text-blue-600 tabular-nums">{progress}%</span>
+    </button>
+  );
+}
+
+function Progress({ value, className = '' }) {
+  const safe = Math.max(0, Math.min(100, Math.round(value || 0)));
+  return (
+    <div className={`h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-zinc-700 overflow-hidden ${className}`}>
+      <div className="h-full rounded-full bg-gradient-to-r from-blue-600 to-teal-400" style={{ width: `${safe}%` }} />
+    </div>
+  );
+}
+
+function Empty({ text }) {
+  return <div className="py-8 text-center text-xs text-gray-400 flex items-center justify-center gap-1.5"><Clock3 size={14} /> {text}</div>;
 }

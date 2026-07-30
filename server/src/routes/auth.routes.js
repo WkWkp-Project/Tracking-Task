@@ -1,22 +1,93 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
+import crypto from 'node:crypto';
 import { google } from 'googleapis';
 import db from '../db.js';
 import { config, googleConfigured } from '../config.js';
 import { signToken, publicUser, requireAuth } from '../auth/jwt.js';
-import { getAuthUrl, makeOAuthClient, GOOGLE_SCOPES } from '../auth/google.js';
+import { getAuthUrl, makeOAuthClient } from '../auth/google.js';
 import { newUser, ROLES } from '../services/users.js';
 
-// roles a user may pick for themselves via /auth/set-role (never 'admin')
-const SELF_ROLES = ROLES.filter((r) => r !== 'admin');
-
+const SELF_ROLES = ROLES.filter((role) => role !== 'admin');
+const OAUTH_STATE_COOKIE = 'tracking_google_oauth_state';
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const LOGIN_CODE_TTL_MS = 60 * 1000;
+const pendingGoogleStates = new Map();
+const pendingLoginCodes = new Map();
 const router = Router();
 
-// ── Email + password login ──────────────────────────────────────────────────
+function pruneOAuthEntries() {
+  const now = Date.now();
+  for (const [key, value] of pendingGoogleStates)
+    if (value.expiresAt <= now) pendingGoogleStates.delete(key);
+  for (const [key, value] of pendingLoginCodes)
+    if (value.expiresAt <= now) pendingLoginCodes.delete(key);
+}
+
+function readCookie(req, name) {
+  const prefix = `${encodeURIComponent(name)}=`;
+  const item = String(req.headers.cookie || '')
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix));
+  return item ? decodeURIComponent(item.slice(prefix.length)) : '';
+}
+
+function stateMatches(received, stored) {
+  if (!received || !stored) return false;
+  const a = Buffer.from(String(received));
+  const b = Buffer.from(String(stored));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function googleCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: config.google.redirectUri.startsWith('https://'),
+    path: '/api/auth/google',
+  };
+}
+
+function beginGoogleFlow(res, details = {}) {
+  pruneOAuthEntries();
+  const state = crypto.randomBytes(32).toString('base64url');
+  pendingGoogleStates.set(state, {
+    ...details,
+    expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
+  });
+  res.cookie(OAUTH_STATE_COOKIE, state, {
+    ...googleCookieOptions(),
+    maxAge: OAUTH_STATE_TTL_MS,
+  });
+  return state;
+}
+
+function clientOriginForRequest(req) {
+  const fallback = config.clientOrigin;
+  const source = req.get('origin') || req.get('referer');
+  if (!source) return fallback;
+  try {
+    const candidate = new URL(source).origin;
+    if (candidate === new URL(fallback).origin) return candidate;
+    const host = new URL(candidate).hostname;
+    if (process.env.NODE_ENV !== 'production' && ['localhost', '127.0.0.1'].includes(host))
+      return candidate;
+  } catch {
+    // Ignore malformed browser headers and use the configured origin.
+  }
+  return fallback;
+}
+
+function redirectToClient(res, params, origin = config.clientOrigin) {
+  const query = new URLSearchParams(params);
+  return res.redirect(`${origin}/auth/callback?${query}`);
+}
+
 router.post('/login', async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'email & password required' });
-  const user = db.users.findOne((u) => u.email.toLowerCase() === String(email).toLowerCase());
+  const user = db.users.findOne((item) => item.email.toLowerCase() === String(email).toLowerCase());
   if (!user || !user.passwordHash)
     return res.status(401).json({ error: 'Invalid credentials' });
   const ok = await bcrypt.compare(password, user.passwordHash);
@@ -25,12 +96,10 @@ router.post('/login', async (req, res) => {
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 
-// ── Current user ─────────────────────────────────────────────────────────────
 router.get('/me', requireAuth, (req, res) => {
   res.json({ user: publicUser(req.user) });
 });
 
-// ── Change own password ──────────────────────────────────────────────────────
 router.post('/change-password', requireAuth, async (req, res) => {
   const { currentPassword, newPassword } = req.body || {};
   if (!newPassword || newPassword.length < 6)
@@ -44,7 +113,6 @@ router.post('/change-password', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-// ── Self-service role pick (first-login gate — never allows 'admin') ─────────
 router.post('/set-role', requireAuth, (req, res) => {
   const { role } = req.body || {};
   if (!SELF_ROLES.includes(role)) return res.status(400).json({ error: 'invalid role' });
@@ -53,28 +121,44 @@ router.post('/set-role', requireAuth, (req, res) => {
   res.json({ token: signToken(updated), user: publicUser(updated) });
 });
 
-// ── Google OAuth config status (for the UI to show/hide the button) ──────────
 router.get('/google/status', (_req, res) => {
-  res.json({ configured: googleConfigured, allowedDomain: config.google.allowedDomain || null });
+  res.json({
+    configured: googleConfigured,
+    allowedDomain: config.google.allowedDomain || null,
+    redirectUri: googleConfigured ? config.google.redirectUri : null,
+  });
 });
 
-// ── Start Google OAuth ───────────────────────────────────────────────────────
-router.get('/google', (_req, res) => {
+router.get('/google', (req, res) => {
   if (!googleConfigured)
     return res.status(503).json({ error: 'Google login is not configured on the server.' });
-  res.redirect(getAuthUrl('login'));
+  const state = beginGoogleFlow(res, {
+    mode: 'login',
+    clientOrigin: clientOriginForRequest(req),
+  });
+  res.redirect(getAuthUrl(state));
 });
 
-// ── Google OAuth callback ────────────────────────────────────────────────────
 router.get('/google/callback', async (req, res) => {
-  const redirectBack = (params) =>
-    res.redirect(`${config.clientOrigin}/auth/callback?${new URLSearchParams(params)}`);
-
-  if (!googleConfigured) return redirectBack({ error: 'google_not_configured' });
-  const { code, error } = req.query;
-  if (error || !code) return redirectBack({ error: error || 'no_code' });
+  if (!googleConfigured) return redirectToClient(res, { error: 'google_not_configured' });
+  const { code, error, state } = req.query;
+  pruneOAuthEntries();
+  const stateValue = String(state || '');
+  const pendingState = pendingGoogleStates.get(stateValue);
+  const clientOrigin = pendingState?.clientOrigin || config.clientOrigin;
+  if (error || !code) {
+    pendingGoogleStates.delete(stateValue);
+    res.clearCookie(OAUTH_STATE_COOKIE, googleCookieOptions());
+    return redirectToClient(res, { error: error || 'no_code' }, clientOrigin);
+  }
 
   try {
+    const cookieState = readCookie(req, OAUTH_STATE_COOKIE);
+    pendingGoogleStates.delete(stateValue);
+    res.clearCookie(OAUTH_STATE_COOKIE, googleCookieOptions());
+    if (!pendingState || !stateMatches(stateValue, cookieState))
+      return redirectToClient(res, { error: 'invalid_state' }, clientOrigin);
+
     const client = makeOAuthClient();
     const { tokens } = await client.getToken(String(code));
     client.setCredentials(tokens);
@@ -82,13 +166,21 @@ router.get('/google/callback', async (req, res) => {
     const oauth2 = google.oauth2({ version: 'v2', auth: client });
     const { data: profile } = await oauth2.userinfo.get();
     const email = (profile.email || '').toLowerCase();
-
+    if (!email || profile.verified_email !== true)
+      return redirectToClient(res, { error: 'email_not_verified' }, clientOrigin);
     if (config.google.allowedDomain && !email.endsWith(`@${config.google.allowedDomain}`))
-      return redirectBack({ error: 'domain_not_allowed' });
+      return redirectToClient(res, { error: 'domain_not_allowed' }, clientOrigin);
 
-    let user = db.users.findOne((u) => u.email.toLowerCase() === email);
+    let user;
+    if (pendingState.mode === 'link') {
+      user = db.users.byId(pendingState.userId);
+      if (!user || user.email.toLowerCase() !== email)
+        return redirectToClient(res, { error: 'account_mismatch' }, clientOrigin);
+    } else {
+      user = db.users.findOne((item) => item.email.toLowerCase() === email);
+    }
+
     if (!user) {
-      // self-provisioned via Google — real role is picked on first login, not guessed
       user = newUser({
         name: profile.name || email.split('@')[0],
         email,
@@ -97,6 +189,10 @@ router.get('/google/callback', async (req, res) => {
       });
       db.users.insert(user);
     }
+    if (user.disabled) return redirectToClient(res, { error: 'account_disabled' }, clientOrigin);
+    if (user.googleId && user.googleId !== profile.id)
+      return redirectToClient(res, { error: 'google_account_conflict' }, clientOrigin);
+
     db.users.update(user.id, {
       googleId: profile.id,
       googleRefreshToken: tokens.refresh_token || user.googleRefreshToken || null,
@@ -104,19 +200,38 @@ router.get('/google/callback', async (req, res) => {
       avatarUrl: profile.picture || user.avatarUrl || null,
     });
 
-    const token = signToken(db.users.byId(user.id));
-    return redirectBack({ token });
-  } catch (e) {
-    console.error('[google/callback]', e.message);
-    return redirectBack({ error: 'oauth_failed' });
+    const loginCode = crypto.randomBytes(32).toString('base64url');
+    pendingLoginCodes.set(loginCode, {
+      userId: user.id,
+      expiresAt: Date.now() + LOGIN_CODE_TTL_MS,
+    });
+    return redirectToClient(res, { code: loginCode }, clientOrigin);
+  } catch (err) {
+    console.error('[google/callback]', err.message);
+    return redirectToClient(res, { error: 'oauth_failed' }, clientOrigin);
   }
 });
 
-// ── Link Google to the currently logged-in account (re-uses same flow) ───────
+router.post('/google/exchange', (req, res) => {
+  pruneOAuthEntries();
+  const code = String(req.body?.code || '');
+  const pending = pendingLoginCodes.get(code);
+  pendingLoginCodes.delete(code);
+  if (!pending) return res.status(400).json({ error: 'Invalid or expired login code' });
+  const user = db.users.byId(pending.userId);
+  if (!user || user.disabled) return res.status(403).json({ error: 'Account unavailable' });
+  res.json({ token: signToken(user), user: publicUser(user) });
+});
+
 router.get('/google/link', requireAuth, (req, res) => {
   if (!googleConfigured)
     return res.status(503).json({ error: 'Google not configured' });
-  res.json({ url: getAuthUrl(`link:${req.user.id}`) });
+  const state = beginGoogleFlow(res, {
+    mode: 'link',
+    userId: req.user.id,
+    clientOrigin: clientOriginForRequest(req),
+  });
+  res.json({ url: getAuthUrl(state) });
 });
 
 export default router;

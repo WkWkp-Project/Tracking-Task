@@ -17,6 +17,7 @@ export const AE_MANHOUR = ['<0.5', '1', '2', '3', '4', '5', '6', '7'];
 const today = () => new Date().toISOString().slice(0, 10);
 const plus = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const estFromManHour = (mh) => (mh === '<0.5' ? 0.5 : Number(mh) || 0);
+const isActiveAe = (user) => !!user && !user.disabled && user.role === 'ae';
 
 // List (optionally filter by inChargeId), newest assign first
 router.get('/', (req, res) => {
@@ -29,13 +30,17 @@ router.get('/', (req, res) => {
 
 router.post('/', (req, res) => {
   const b = req.body || {};
+  const project = (b.project || '').trim();
+  const workDetails = (b.workDetails || '').trim();
+  if (!project || !workDetails) return res.status(400).json({ error: 'brand/project and work details required' });
+  if (!isActiveAe(db.users.byId(b.inChargeId))) return res.status(400).json({ error: 'in charge must be an active AE member' });
   const manHour = AE_MANHOUR.includes(b.manHour) ? b.manHour : '<0.5';
   const row = {
     id: `ae_${nanoid(8)}`,
     assignDate: b.assignDate || today(),
     inChargeId: b.inChargeId || null,
-    project: b.project || '',
-    workDetails: b.workDetails || '',
+    project,
+    workDetails,
     priority: AE_PRIORITY.includes(b.priority) ? b.priority : 'daily',
     status: AE_STATUS.includes(b.status) ? b.status : 'not_started',
     startDate: b.startDate || today(),
@@ -65,8 +70,12 @@ router.patch('/:id', (req, res) => {
   if (!row) return res.status(404).json({ error: 'not found' });
   const b = req.body || {};
   const patch = {};
+  if (b.inChargeId !== undefined && !isActiveAe(db.users.byId(b.inChargeId)))
+    return res.status(400).json({ error: 'in charge must be an active AE member' });
+  if (b.project !== undefined && !(b.project || '').trim())
+    return res.status(400).json({ error: 'brand/project required' });
   for (const f of ['assignDate', 'inChargeId', 'project', 'workDetails', 'startDate', 'dueDate', 'notes', 'assets']) {
-    if (b[f] !== undefined) patch[f] = b[f];
+    if (b[f] !== undefined) patch[f] = f === 'project' || f === 'workDetails' ? String(b[f]).trim() : b[f];
   }
   if (b.priority !== undefined && AE_PRIORITY.includes(b.priority)) patch.priority = b.priority;
   if (b.status !== undefined && AE_STATUS.includes(b.status)) patch.status = b.status;

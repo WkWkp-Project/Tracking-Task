@@ -16,7 +16,11 @@ function inRange(day, from, to) {
 // GET /api/workload?from=YYYY-MM-DD&to=YYYY-MM-DD&assigneeId=optional
 router.get('/', (req, res) => {
   const { from, to, assigneeId } = req.query;
-  let members = db.users.all().filter((u) => !u.disabled && u.role !== 'admin');
+  // PM workload is for production workers only. PM/admin supervise the work,
+  // while AE has its own board and calendar and must never appear here.
+  let members = db.users.all().filter((u) =>
+    !u.disabled && !['admin', 'pm', 'ae'].includes(u.role)
+  );
   if (assigneeId) members = members.filter((u) => u.id === assigneeId);
 
   const result = members.map((user) => {

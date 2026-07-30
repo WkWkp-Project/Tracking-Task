@@ -13,6 +13,7 @@ let io = null;
 export function initRealtime(httpServer) {
   io = new Server(httpServer, {
     cors: { origin: config.clientOrigin, credentials: true },
+    maxHttpBufferSize: 5 * 1024 * 1024,
   });
 
   io.use((socket, next) => {

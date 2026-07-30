@@ -16,6 +16,7 @@ const EMPTY = {
   tasks: [],
   drafts: [],
   attachments: [],
+  taskUpdates: [],    // task notes/comments with optional file attachment
   messages: [],     // chat (dm / task / project channels)
   notifications: [],
   timeLogs: [],      // individual hour entries logged against a task/draft
@@ -130,6 +131,7 @@ export const db = {
   tasks: new Collection('tasks'),
   drafts: new Collection('drafts'),
   attachments: new Collection('attachments'),
+  taskUpdates: new Collection('taskUpdates'),
   messages: new Collection('messages'),
   notifications: new Collection('notifications'),
   timeLogs: new Collection('timeLogs'),

@@ -13,6 +13,10 @@ export const TASK_STATUSES = [
   'To Do', 'Draft 1', 'Draft 2', 'Final', 'Client Review', 'Approval', 'Done', 'Cancelled',
 ];
 
+function isPmWorker(user) {
+  return !!user && !user.disabled && !['admin', 'pm', 'ae'].includes(user.role);
+}
+
 // A "day of work" converts to this many effort-hours when a draft estimate is
 // entered as days + hours (e.g. "1 วัน 15 ชม" => 1*8 + 15 = 23h).
 export const STD_DAY_HOURS = 8;
@@ -95,7 +99,7 @@ router.post('/conflict-check', (req, res) => {
   if (!assigneeId || !startDate || !endDate)
     return res.status(400).json({ error: 'assigneeId, startDate, endDate required' });
   const assignee = db.users.byId(assigneeId);
-  if (!assignee) return res.status(404).json({ error: 'assignee not found' });
+  if (!isPmWorker(assignee)) return res.status(400).json({ error: 'assignee must be an active PM production worker' });
 
   const est =
     Number(estimatedHours) ||
@@ -139,6 +143,11 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'projectId, title, assigneeId, startDate, endDate required' });
   if (status && !TASK_STATUSES.includes(status))
     return res.status(400).json({ error: 'invalid status' });
+  const project = db.projects.byId(projectId);
+  if (!project) return res.status(404).json({ error: 'project not found' });
+  if (project.archived) return res.status(409).json({ error: 'cannot create a task in an archived project' });
+  const assignee = db.users.byId(assigneeId);
+  if (!isPmWorker(assignee)) return res.status(400).json({ error: 'assignee must be an active PM production worker' });
 
   const id = `tsk_${nanoid(8)}`;
   const draftRows = makeDraftsFromInput(id, drafts);
@@ -166,13 +175,11 @@ router.post('/', async (req, res) => {
   draftRows.forEach((dr) => db.drafts.insert(dr));
 
   // ── conflict / risk evaluation -> notify PM if dangerous ──
-  const assignee = db.users.byId(assigneeId);
   const others = assigneeOtherTasks(task);
   const conflict = detectConflicts(assignee, others, task);
   const risk = riskFor(task);
 
   if (conflict.hasConflict || ['High', 'Critical'].includes(risk.level)) {
-    const project = db.projects.byId(projectId);
     notify(task.pmId, {
       type: 'task_conflict',
       severity: risk.level === 'Critical' ? 'critical' : 'warning',
@@ -200,7 +207,6 @@ router.post('/', async (req, res) => {
   let calendarWarning = null;
   if (task.syncCalendar) {
     try {
-      const project = db.projects.byId(projectId);
       const { eventId } = await upsertTaskEvent(req.user, task, [
         assignee?.email,
         db.users.byId(task.pmId)?.email,
@@ -226,6 +232,8 @@ router.patch('/:id', async (req, res) => {
   for (const f of fields) if (req.body?.[f] !== undefined) patch[f] = req.body[f];
   if (patch.status && !TASK_STATUSES.includes(patch.status))
     return res.status(400).json({ error: 'invalid status' });
+  if (patch.assigneeId && !isPmWorker(db.users.byId(patch.assigneeId)))
+    return res.status(400).json({ error: 'assignee must be an active PM production worker' });
   db.tasks.update(task.id, patch);
   let updated = recomputeHours(db.tasks.byId(task.id));
 
@@ -295,7 +303,83 @@ router.delete('/:id', async (req, res) => {
   if (task.calendarEventId) { try { await deleteTaskEvent(req.user, task.calendarEventId); } catch {} }
   db.drafts.removeWhere((dr) => dr.taskId === task.id);
   db.attachments.removeWhere((a) => a.taskId === task.id);
+  db.taskUpdates.removeWhere((entry) => entry.taskId === task.id);
   db.tasks.remove(task.id);
+  res.json({ ok: true });
+});
+
+// ── Task notes & team comments ──────────────────────────────────────────────
+router.get('/:id/updates', (req, res) => {
+  const task = db.tasks.byId(req.params.id);
+  if (!task) return res.status(404).json({ error: 'not found' });
+  const updates = db.taskUpdates
+    .find((entry) => entry.taskId === task.id)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((entry) => ({
+      ...entry,
+      author: (() => {
+        const user = db.users.byId(entry.authorId);
+        return user ? { id: user.id, name: user.name, role: user.role, avatarUrl: user.avatarUrl || null } : null;
+      })(),
+      canDelete: entry.authorId === req.user.id || task.pmId === req.user.id || req.user.role === 'admin',
+    }));
+  res.json({ updates });
+});
+
+router.post('/:id/updates', (req, res) => {
+  const task = db.tasks.byId(req.params.id);
+  if (!task) return res.status(404).json({ error: 'not found' });
+  const draftId = req.body?.draftId || null;
+  if (draftId) {
+    const draft = db.drafts.byId(draftId);
+    if (!draft || draft.taskId !== task.id)
+      return res.status(400).json({ error: 'draft not found in task' });
+  }
+  const type = req.body?.type === 'note' ? 'note' : 'comment';
+  const body = (req.body?.body || '').trim();
+  const attachment = req.body?.attachment || null;
+  if (!body && !attachment?.url) return res.status(400).json({ error: 'body or attachment required' });
+  const entry = {
+    id: `upd_${nanoid(8)}`,
+    taskId: task.id,
+    draftId,
+    type,
+    body,
+    attachment: attachment?.url ? {
+      name: (attachment.name || 'attachment').slice(0, 160),
+      type: attachment.type || 'file',
+      url: attachment.url,
+    } : null,
+    authorId: req.user.id,
+    createdAt: new Date().toISOString(),
+  };
+  db.taskUpdates.insert(entry);
+  const recipients = [task.pmId, task.assigneeId].filter((id) => id && id !== req.user.id);
+  if (recipients.length) {
+    notifyMany(recipients, {
+      type: 'task_comment',
+      title: `${type === 'note' ? '📝 โน้ตใหม่' : '💬 คอมเมนต์ใหม่'}: ${task.title}`,
+      body: body || `แนบไฟล์ ${entry.attachment?.name}`,
+      link: `/tasks/${task.id}`,
+      meta: { taskId: task.id, updateId: entry.id },
+    });
+  }
+  res.status(201).json({
+    update: {
+      ...entry,
+      author: { id: req.user.id, name: req.user.name, role: req.user.role, avatarUrl: req.user.avatarUrl || null },
+      canDelete: true,
+    },
+  });
+});
+
+router.delete('/:id/updates/:updateId', (req, res) => {
+  const task = db.tasks.byId(req.params.id);
+  const entry = db.taskUpdates.byId(req.params.updateId);
+  if (!task || !entry || entry.taskId !== task.id) return res.status(404).json({ error: 'not found' });
+  if (entry.authorId !== req.user.id && task.pmId !== req.user.id && req.user.role !== 'admin')
+    return res.status(403).json({ error: 'ไม่มีสิทธิ์ลบรายการนี้' });
+  db.taskUpdates.remove(entry.id);
   res.json({ ok: true });
 });
 
@@ -338,6 +422,24 @@ router.patch('/:id/drafts/:draftId', (req, res) => {
   if (dueDate !== undefined) patch.dueDate = dueDate;
   if (fileName !== undefined) { patch.fileName = fileName; patch.fileType = fileType || null; patch.fileUrl = fileUrl || null; }
   db.drafts.update(draft.id, patch);
+  recomputeHours(task);
+  res.json({ task: decorate(db.tasks.byId(task.id)) });
+});
+
+// ── Delete a draft step and its associated hour logs ────────────────────────
+router.delete('/:id/drafts/:draftId', (req, res) => {
+  const task = db.tasks.byId(req.params.id);
+  const draft = db.drafts.byId(req.params.draftId);
+  if (!task || !draft || draft.taskId !== task.id)
+    return res.status(404).json({ error: 'not found' });
+
+  db.timeLogs.removeWhere((entry) => entry.taskId === task.id && entry.draftId === draft.id);
+  db.taskUpdates.removeWhere((entry) => entry.taskId === task.id && entry.draftId === draft.id);
+  db.drafts.remove(draft.id);
+  db.drafts
+    .find((entry) => entry.taskId === task.id)
+    .sort((a, b) => (a.order || 0) - (b.order || 0))
+    .forEach((entry, order) => db.drafts.update(entry.id, { order }));
   recomputeHours(task);
   res.json({ task: decorate(db.tasks.byId(task.id)) });
 });

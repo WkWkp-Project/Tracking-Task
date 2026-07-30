@@ -13,15 +13,16 @@ router.get('/status', (req, res) => {
   res.json({
     configured: googleConfigured,
     linked: Boolean(req.user.googleRefreshToken),
+    email: req.user.email,
   });
 });
 
 // Send a client email through the logged-in user's Gmail
 router.post('/gmail/send', async (req, res) => {
-  const { to, cc, subject, text, html, taskId } = req.body || {};
+  const { to, cc, bcc, subject, text, html, attachments, taskId } = req.body || {};
   if (!to || !subject) return res.status(400).json({ error: 'to & subject required' });
   try {
-    const result = await sendEmail(req.user, { to, cc, subject, text, html });
+    const result = await sendEmail(req.user, { to, cc, bcc, subject, text, html, attachments });
     // log it into the task's client channel as a record
     if (taskId) {
       notify(req.user.id, {

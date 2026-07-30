@@ -7,8 +7,44 @@ body {
   margin: 0;
   font-family: 'Prompt', 'Poppins', system-ui, -apple-system, 'Segoe UI', sans-serif;
   background: #f6f6f7;
+  transition: background-color 180ms ease, color 180ms ease;
 }
+.dark body { background: #09090b; color: #f4f4f5; }
 * { box-sizing: border-box; }
+input, select, textarea {
+  color: #18181b;
+  background-color: #ffffff;
+}
+input::placeholder, textarea::placeholder { color: #a1a1aa; }
+input:disabled, select:disabled, textarea:disabled {
+  color: #71717a;
+  -webkit-text-fill-color: #71717a;
+  opacity: 1;
+}
+.dark input, .dark select, .dark textarea {
+  color: #f4f4f5;
+  background-color: #18181b;
+  border-color: #52525b;
+  color-scheme: dark;
+}
+.dark input::placeholder, .dark textarea::placeholder { color: #71717a; }
+.dark input:disabled, .dark select:disabled, .dark textarea:disabled {
+  color: #a1a1aa;
+  -webkit-text-fill-color: #a1a1aa;
+  background-color: #27272a;
+}
+option { color: #18181b; background: #ffffff; }
+.dark option { color: #f4f4f5; background: #18181b; }
+
+/* Contrast safety net for legacy surfaces that have not declared a dark token. */
+.dark .bg-white { background-color: #18181b; }
+.dark .bg-gray-50 { background-color: #27272a; }
+.dark .text-gray-950, .dark .text-gray-900 { color: #fafafa; }
+.dark .text-gray-800 { color: #f4f4f5; }
+.dark .text-gray-700 { color: #e4e4e7; }
+.dark .text-gray-600 { color: #d4d4d8; }
+.dark .text-gray-500 { color: #a1a1aa; }
+.dark .border-gray-100, .dark .border-gray-200 { border-color: #3f3f46; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
 ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }

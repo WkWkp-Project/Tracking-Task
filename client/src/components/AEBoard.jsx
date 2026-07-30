@@ -31,11 +31,12 @@ function PillSelect({ value, onChange, options, className = '' }) {
   );
 }
 
-export default function AEBoard({ users, currentUser }) {
+export default function AEBoard({ users, currentUser, initialProject = null }) {
   const aePeople = useMemo(() => users.filter((u) => u.role === 'ae'), [users]);
   const [rows, setRows] = useState(null);
   const [brands, setBrands] = useState([]);
   const [filter, setFilter] = useState('all');
+  const [projectFilter, setProjectFilter] = useState(initialProject);
   const [showNewTask, setShowNewTask] = useState(false);
 
   const load = async () => {
@@ -47,6 +48,7 @@ export default function AEBoard({ users, currentUser }) {
     setBrands(brands);
   };
   useEffect(() => { load(); loadBrands(); }, []);
+  useEffect(() => { setProjectFilter(initialProject); }, [initialProject]);
 
   const projectOptions = useMemo(() => {
     const set = new Set(KNOWN_PROJECTS);
@@ -55,7 +57,10 @@ export default function AEBoard({ users, currentUser }) {
   }, [rows]);
 
   const personById = (id) => users.find((u) => u.id === id);
-  const filtered = (rows || []).filter((r) => filter === 'all' || r.inChargeId === filter);
+  const filtered = (rows || []).filter((r) =>
+    (filter === 'all' || r.inChargeId === filter) &&
+    (!projectFilter || r.project?.trim().toLowerCase() === projectFilter.trim().toLowerCase())
+  );
 
   // optimistic patch
   const patch = async (id, p) => {
@@ -83,6 +88,11 @@ export default function AEBoard({ users, currentUser }) {
               <Avatar user={p} size={20} /> {p.name.split(' ')[0]}
             </button>
           ))}
+          {projectFilter && (
+            <button onClick={() => setProjectFilter(null)} className="px-3 py-1.5 rounded-full border border-violet-300 bg-violet-50 text-violet-700 text-xs font-bold">
+              แบรนด์: {projectFilter} ×
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-400 tabular-nums">{filtered.length} งาน</span>
@@ -212,6 +222,7 @@ export default function AEBoard({ users, currentUser }) {
         users={users}
         brands={brands}
         presetInChargeId={filter !== 'all' ? filter : null}
+        presetProject={projectFilter}
         existingProjects={projectOptions}
         onCreated={(task) => { setRows((rs) => [task, ...(rs || [])]); loadBrands(); }}
       />

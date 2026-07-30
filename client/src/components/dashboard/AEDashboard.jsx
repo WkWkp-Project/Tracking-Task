@@ -4,11 +4,12 @@ import api from '../../api/client.js';
 import { Avatar, Spinner } from '../ui.jsx';
 import { aePriority, dueSeverity, fmtDate, AE_STATUS } from '../../utils.js';
 import { StatCard, SectionCard, PersonRow } from './DashboardParts.jsx';
+import BrandProjectCards from './BrandProjectCards.jsx';
 
 const AE_BAR = { not_started: 'bg-gray-300', in_progress: 'bg-violet-400', waiting_client: 'bg-amber-400', waiting_internal: 'bg-amber-400', done: 'bg-emerald-400' };
 const DUE_BAR = { danger: 'bg-red-500', warn: 'bg-amber-400', ok: 'bg-emerald-400', done: 'bg-gray-300', none: 'bg-gray-200' };
 
-export default function AEDashboard({ users }) {
+export default function AEDashboard({ users, projects, brands, onOpenBrand, onManageBrands, onOpenAeBoard }) {
   const [aeRows, setAeRows] = useState(null);
   const [loadedAt, setLoadedAt] = useState(null);
 
@@ -107,6 +108,15 @@ export default function AEDashboard({ users }) {
           )}
         </SectionCard>
       </div>
+
+      <BrandProjectCards
+        mode="ae"
+        projects={projects}
+        brands={brands}
+        onOpenBrand={onOpenBrand}
+        onManageBrands={onManageBrands}
+        onNewProject={onOpenAeBoard}
+      />
     </div>
   );
 }

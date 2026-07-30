@@ -40,6 +40,14 @@ export function AuthProvider({ children }) {
     return user;
   };
 
+  const loginWithGoogleCode = async (code) => {
+    const { token, user } = await api.exchangeGoogleCode(code);
+    setToken(token);
+    setUser(user);
+    connectSocket();
+    return user;
+  };
+
   const logout = () => {
     setToken(null);
     setUser(null);
@@ -52,7 +60,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthCtx.Provider value={{ user, loading, login, loginWithToken, logout, refreshUser, isAdmin: user?.role === 'admin' }}>
+    <AuthCtx.Provider value={{ user, loading, login, loginWithToken, loginWithGoogleCode, logout, refreshUser, isAdmin: user?.role === 'admin' }}>
       {children}
     </AuthCtx.Provider>
   );

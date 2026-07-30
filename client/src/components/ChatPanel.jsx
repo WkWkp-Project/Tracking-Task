@@ -7,7 +7,19 @@ import { fmtTime } from '../utils.js';
 import { useAuth } from '../context/AuthContext.jsx';
 
 const UNSEND_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_CHAT_FILE_BYTES = 3 * 1024 * 1024;
 function dmKey(a, b) { return [a, b].sort().join('::'); }
+
+function readChatFile(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) return reject(new Error('ไม่พบไฟล์'));
+    if (file.size > MAX_CHAT_FILE_BYTES) return reject(new Error('ไฟล์ต้องมีขนาดไม่เกิน 3 MB'));
+    const reader = new FileReader();
+    reader.onload = () => resolve({ name: file.name, type: file.type || 'file', url: reader.result });
+    reader.onerror = () => reject(new Error('อ่านไฟล์ไม่สำเร็จ'));
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function ChatPanel({ open, onClose, presetUserId, users = [], onOpenTask }) {
   const { user } = useAuth();
@@ -96,8 +108,8 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
 
   const send = async (e) => {
     e?.preventDefault();
-    if (!text.trim() || !active) return;
-    const body = text.trim();
+    if ((!text.trim() && !pendingAttachment) || !active) return;
+    const body = text.trim() || `ส่งไฟล์: ${pendingAttachment.name}`;
     const channelType = active.type === 'group' ? 'group' : 'dm';
     const channelKey = activeKey();
     const payload = { channelType, channelKey, body, taskId: pendingTaskId || null, attachment: pendingAttachment || null };
@@ -122,11 +134,12 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
     } catch (err) { alert(err.message); }
   };
 
-  const attachLink = () => {
-    const url = prompt('ใส่ลิงก์ไฟล์/เอกสาร (URL)');
-    if (!url) return;
-    const name = prompt('ชื่อไฟล์ที่จะแสดง', url) || url;
-    setPendingAttachment({ name, url });
+  const attachFile = async (file) => {
+    try {
+      setPendingAttachment(await readChatFile(file));
+    } catch (error) {
+      alert(error.message);
+    }
   };
 
   const createGroup = async (e) => {
@@ -147,23 +160,23 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
   if (!open) return null;
 
   return (
-    <div className="fixed bottom-0 right-6 w-[720px] h-[500px] bg-white rounded-t-xl shadow-2xl border border-gray-200 z-40 flex overflow-hidden">
+    <div className="fixed right-4 bottom-4 w-[560px] max-w-[calc(100vw-2rem)] h-[min(440px,calc(100vh-5.5rem))] min-h-[320px] bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-zinc-700 z-40 flex overflow-hidden max-sm:inset-0 max-sm:w-full max-sm:max-w-none max-sm:h-full max-sm:min-h-0 max-sm:rounded-none">
       {/* conversation list */}
-      <div className="w-60 border-r border-gray-100 flex flex-col bg-gray-50">
-        <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-white">
-          <span className="font-bold text-sm flex items-center gap-1.5" title="ข้อความเข้ารหัสไว้ในระบบ">
+      <div className="w-44 sm:w-48 border-r border-gray-100 dark:border-zinc-800 flex flex-col bg-gray-50 dark:bg-zinc-950">
+        <div className="px-3 py-3 border-b border-gray-100 dark:border-zinc-800 flex items-center justify-between bg-white dark:bg-zinc-900">
+          <span className="font-bold text-sm text-gray-900 dark:text-zinc-100 flex items-center gap-1.5" title="ข้อความเข้ารหัสไว้ในระบบ">
             <MessageSquare size={16} className="text-blue-600" /> แชตทีม <Lock size={11} className="text-gray-300" />
           </span>
           <button onClick={() => setShowNewGroup((v) => !v)} title="สร้างกลุ่มแชต" className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"><Plus size={16} /></button>
         </div>
 
         {showNewGroup && (
-          <form onSubmit={createGroup} className="p-3 border-b border-gray-100 bg-white space-y-2">
+          <form onSubmit={createGroup} className="p-3 border-b border-gray-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 space-y-2">
             <input value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="ชื่อกลุ่ม…" required
-              className="w-full p-1.5 border border-gray-300 rounded text-xs" />
+              className="w-full p-1.5 text-gray-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded text-xs" />
             <div className="max-h-24 overflow-y-auto space-y-1">
               {users.filter((u) => u.id !== user.id).map((u) => (
-                <label key={u.id} className="flex items-center gap-1.5 text-[11px] text-gray-700">
+                <label key={u.id} className="flex items-center gap-1.5 text-[11px] text-gray-700 dark:text-zinc-300">
                   <input type="checkbox" checked={groupMemberIds.includes(u.id)}
                     onChange={(e) => setGroupMemberIds((prev) => e.target.checked ? [...prev, u.id] : prev.filter((id) => id !== u.id))} />
                   {u.name}
@@ -180,10 +193,10 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
               <p className="px-3 pt-2 pb-1 text-[10px] font-bold text-gray-400 uppercase">กลุ่ม</p>
               {groups.map((g) => (
                 <button key={g.id} onClick={() => openGroup(g)}
-                  className={`w-full flex items-center gap-2 px-3 py-2 hover:bg-white text-left ${active?.type === 'group' && active.group.id === g.id ? 'bg-white' : ''}`}>
+                  className={`w-full flex items-center gap-2 px-3 py-2 hover:bg-white dark:hover:bg-zinc-800 text-left ${active?.type === 'group' && active.group.id === g.id ? 'bg-white dark:bg-zinc-800' : ''}`}>
                   <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0"><Users size={15} /></div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-gray-800 truncate">{g.name}</p>
+                    <p className="text-xs font-bold text-gray-800 dark:text-zinc-100 truncate">{g.name}</p>
                     <p className="text-[11px] text-gray-400 truncate">{g.lastMessage?.body || 'เริ่มแชตกลุ่ม'}</p>
                   </div>
                   {g.unread > 0 && <span className="bg-blue-600 text-white text-[10px] font-bold rounded-full px-1.5">{g.unread}</span>}
@@ -198,14 +211,14 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
             <button
               key={c.user.id}
               onClick={() => openChat(c.user)}
-              className={`w-full flex items-center gap-2 px-3 py-2.5 hover:bg-white text-left ${active?.type === 'dm' && active.user.id === c.user.id ? 'bg-white' : ''}`}
+              className={`w-full flex items-center gap-2 px-3 py-2.5 hover:bg-white dark:hover:bg-zinc-800 text-left ${active?.type === 'dm' && active.user.id === c.user.id ? 'bg-white dark:bg-zinc-800' : ''}`}
             >
               <div className="relative">
                 <Avatar user={c.user} size={32} />
                 <Circle size={9} className={`absolute -bottom-0.5 -right-0.5 ${c.user.online ? 'text-emerald-500 fill-emerald-500' : 'text-gray-300 fill-gray-300'}`} />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-gray-800 truncate">{c.user.name}</p>
+                <p className="text-xs font-bold text-gray-800 dark:text-zinc-100 truncate">{c.user.name}</p>
                 <p className="text-[11px] text-gray-400 truncate">{c.lastMessage?.body || 'เริ่มแชต'}</p>
               </div>
               {c.unread > 0 && <span className="bg-blue-600 text-white text-[10px] font-bold rounded-full px-1.5">{c.unread}</span>}
@@ -216,13 +229,13 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
 
       {/* thread */}
       <div className="flex-1 flex flex-col">
-        <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-          <span className="font-bold text-sm text-gray-800">
+        <div className="px-4 py-3 border-b border-gray-100 dark:border-zinc-800 flex items-center justify-between">
+          <span className="font-bold text-sm text-gray-800 dark:text-zinc-100">
             {active?.type === 'group' ? active.group.name : active?.type === 'dm' ? active.user.name : 'เลือกคนเพื่อเริ่มแชต'}
           </span>
           <button onClick={onClose} className="p-1 text-gray-400 hover:bg-gray-100 rounded-full"><X size={16} /></button>
         </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-gray-50">
+        <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-gray-50 dark:bg-zinc-950">
           {!active ? (
             <div className="h-full flex items-center justify-center text-gray-400 text-sm">เลือกเพื่อนร่วมงานหรือกลุ่มทางซ้าย</div>
           ) : messages.length === 0 ? (
@@ -234,7 +247,7 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
               const taggedTask = m.taskId ? taskById[m.taskId] : null;
               return (
                 <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`group relative max-w-[75%] px-3 py-2 rounded-2xl text-sm ${mine ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-white border border-gray-200 text-gray-800 rounded-bl-sm'}`}>
+                  <div className={`group relative max-w-[82%] px-3 py-2 rounded-2xl text-sm ${mine ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 text-gray-800 dark:text-zinc-100 rounded-bl-sm'}`}>
                     {senderName && <p className="text-[10px] font-bold text-indigo-500 mb-0.5">{senderName}</p>}
                     {taggedTask && (
                       <button onClick={() => onOpenTask?.(taggedTask.id)}
@@ -264,7 +277,7 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
           <div ref={bottomRef} />
         </div>
         {active && (
-          <div className="border-t border-gray-100">
+          <div className="border-t border-gray-100 dark:border-zinc-800">
             {(pendingTaskId || pendingAttachment) && (
               <div className="px-3 pt-2 flex items-center gap-2 flex-wrap">
                 {pendingTaskId && (
@@ -284,7 +297,7 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
             {showTagPicker && (
               <div className="px-3 pt-2">
                 <input value={taskFilter} onChange={(e) => setTaskFilter(e.target.value)} autoFocus placeholder="ค้นหางานที่จะแท็ก…"
-                  className="w-full p-1.5 border border-gray-300 rounded text-xs mb-1" />
+                  className="w-full p-1.5 text-gray-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded text-xs mb-1" />
                 <div className="max-h-28 overflow-y-auto border border-gray-100 rounded">
                   {filteredTasks.map((t) => (
                     <button key={t.id} type="button" onClick={() => { setPendingTaskId(t.id); setShowTagPicker(false); setTaskFilter(''); }}
@@ -295,14 +308,21 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
               </div>
             )}
             <form onSubmit={send} className="p-3 flex gap-2 items-center">
-              <button type="button" onClick={attachLink} title="แนบลิงก์ไฟล์" className="p-2 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-full"><Paperclip size={16} /></button>
+              <label title="แนบไฟล์ (สูงสุด 3 MB)" className="p-2 text-gray-400 hover:text-blue-600 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-full cursor-pointer">
+                <Paperclip size={16} />
+                <input type="file" className="hidden" onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) attachFile(file);
+                  e.target.value = '';
+                }} />
+              </label>
               <button type="button" onClick={() => setShowTagPicker((v) => !v)} title="แท็กงาน" className="p-2 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-full"><Tag size={16} /></button>
               <input
                 value={text} onChange={(e) => setText(e.target.value)}
                 placeholder="พิมพ์ข้อความ…"
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-full text-sm outline-none focus:border-blue-500"
+                className="flex-1 min-w-0 px-3 py-2 text-gray-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-full text-sm outline-none focus:border-blue-500"
               />
-              <button type="submit" className="p-2.5 bg-blue-600 text-white rounded-full hover:bg-blue-700"><Send size={16} /></button>
+              <button type="submit" disabled={!text.trim() && !pendingAttachment} className="p-2.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 disabled:opacity-40"><Send size={16} /></button>
             </form>
           </div>
         )}

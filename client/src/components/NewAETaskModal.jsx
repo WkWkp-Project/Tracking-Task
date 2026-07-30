@@ -10,7 +10,7 @@ const plus = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d
 const estFromManHour = (mh) => (mh === '<0.5' ? 0.5 : Number(mh) || 0);
 const KNOWN_PROJECTS = ['AE work', 'New client', 'Falcon', 'Thychef', 'Kirin', 'Tulip', 'Debic'];
 
-export default function NewAETaskModal({ open, onClose, users, brands = [], presetInChargeId, existingProjects = [], onCreated }) {
+export default function NewAETaskModal({ open, onClose, users, brands = [], presetInChargeId, presetProject, existingProjects = [], onCreated }) {
   const aePeople = users.filter((u) => u.role === 'ae');
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -20,7 +20,7 @@ export default function NewAETaskModal({ open, onClose, users, brands = [], pres
     if (open) {
       setForm({
         workDetails: '',
-        project: 'AE work',
+        project: presetProject || 'AE work',
         inChargeId: presetInChargeId || aePeople[0]?.id || '',
         priority: 'daily',
         status: 'not_started',
@@ -34,7 +34,7 @@ export default function NewAETaskModal({ open, onClose, users, brands = [], pres
       setError('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, presetInChargeId]);
+  }, [open, presetInChargeId, presetProject]);
 
   if (!open || !form) return null;
 
@@ -56,9 +56,16 @@ export default function NewAETaskModal({ open, onClose, users, brands = [], pres
 
   return (
     <Modal open={open} onClose={onClose} width="max-w-2xl" z="z-[60]">
-      <ModalHeader title="สร้างงาน AE ใหม่" icon={<Plus size={18} className="text-blue-600" />} onClose={onClose} />
+      <ModalHeader title={presetProject ? `สร้างงาน AE ใหม่ — ${presetProject}` : 'สร้างงาน AE ใหม่'} icon={<Plus size={18} className="text-blue-600" />} onClose={onClose} />
       <form onSubmit={submit} className="flex-1 overflow-y-auto p-6 space-y-4">
         {error && <p className="text-sm text-red-600 bg-red-50 p-2 rounded">{error}</p>}
+        {presetProject && (
+          <div className="p-3 rounded-xl border border-violet-200 dark:border-violet-900 bg-violet-50 dark:bg-violet-950/30">
+            <p className="text-[9px] font-bold uppercase tracking-wider text-violet-500">แบรนด์ปลายทาง</p>
+            <p className="text-sm font-black text-violet-900 dark:text-violet-100 mt-0.5">{presetProject}</p>
+            <p className="text-[10px] text-violet-600/80 dark:text-violet-300 mt-1">งานนี้จะถูกบันทึกในแบรนด์ที่เลือกจาก Dashboard AE</p>
+          </div>
+        )}
 
         <div>
           <label className="block text-xs font-bold text-gray-700 mb-1">รายละเอียดงาน</label>
@@ -81,7 +88,9 @@ export default function NewAETaskModal({ open, onClose, users, brands = [], pres
           <div>
             <label className="block text-[11px] font-bold text-indigo-600 uppercase mb-1">Project</label>
             <input list="ae-new-projects" value={form.project} onChange={(e) => setForm({ ...form, project: e.target.value })}
-              className="w-full p-2 border border-gray-300 rounded-lg text-sm" placeholder="เช่น Falcon" />
+              readOnly={!!presetProject}
+              required
+              className={`w-full p-2 border border-gray-300 rounded-lg text-sm ${presetProject ? 'bg-gray-100 text-gray-600 cursor-not-allowed' : ''}`} placeholder="เช่น Falcon" />
             <datalist id="ae-new-projects">{projectOptions.map((p) => <option key={p} value={p} />)}</datalist>
           </div>
         </div>

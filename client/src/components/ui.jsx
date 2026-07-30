@@ -30,7 +30,7 @@ export function Modal({ open, onClose, children, width = 'max-w-lg', z = 'z-50' 
   if (!open) return null;
   return (
     <div className={`fixed inset-0 bg-gray-900/60 backdrop-blur-sm ${z} flex items-center justify-center p-4`} onClick={onClose}>
-      <div className={`bg-white rounded-2xl shadow-2xl w-full ${width} max-h-[90vh] overflow-hidden flex flex-col`} onClick={(e) => e.stopPropagation()}>
+      <div className={`bg-white dark:bg-zinc-900 text-gray-800 dark:text-zinc-100 rounded-2xl shadow-2xl w-full ${width} max-h-[90vh] overflow-hidden flex flex-col`} onClick={(e) => e.stopPropagation()}>
         {children}
       </div>
     </div>
@@ -39,9 +39,9 @@ export function Modal({ open, onClose, children, width = 'max-w-lg', z = 'z-50' 
 
 export function ModalHeader({ title, icon, onClose }) {
   return (
-    <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 shrink-0">
-      <h2 className="font-bold text-gray-900 flex items-center gap-2">{icon}{title}</h2>
-      <button onClick={onClose} className="p-1.5 text-gray-400 hover:bg-gray-200 rounded-full"><X size={18} /></button>
+    <div className="px-6 py-4 border-b border-gray-100 dark:border-zinc-800 flex justify-between items-center bg-gray-50 dark:bg-zinc-800 shrink-0">
+      <h2 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">{icon}{title}</h2>
+      <button onClick={onClose} className="p-1.5 text-gray-400 hover:bg-gray-200 dark:hover:bg-zinc-700 rounded-full"><X size={18} /></button>
     </div>
   );
 }

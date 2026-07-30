@@ -10,7 +10,29 @@ import { requireAuth, requireAdmin } from '../auth/jwt.js';
 const router = Router();
 router.use(requireAuth);
 
+function syncBrandsFromWork() {
+  const known = new Map(db.brands.all().map((brand) => [brand.name.trim().toLowerCase(), brand]));
+  const sources = [
+    ...db.projects.all().map((project) => ({ name: project.brand, logoUrl: project.logoUrl || null })),
+    ...db.aeTasks.all().map((task) => ({ name: task.project, logoUrl: null })),
+  ];
+  for (const source of sources) {
+    const name = (source.name || '').trim();
+    if (!name || known.has(name.toLowerCase())) continue;
+    const brand = {
+      id: `brd_${nanoid(8)}`,
+      name,
+      logoUrl: source.logoUrl,
+      createdAt: new Date().toISOString(),
+      createdBy: 'system-sync',
+    };
+    db.brands.insert(brand);
+    known.set(name.toLowerCase(), brand);
+  }
+}
+
 router.get('/', (_req, res) => {
+  syncBrandsFromWork();
   const brands = [...db.brands.all()].sort((a, b) => a.name.localeCompare(b.name));
   res.json({ brands });
 });
@@ -30,13 +52,28 @@ router.patch('/:id', requireAdmin, (req, res) => {
   const brand = db.brands.byId(req.params.id);
   if (!brand) return res.status(404).json({ error: 'not found' });
   const patch = {};
+  const oldName = brand.name;
   if (req.body?.name !== undefined) {
     const name = req.body.name.trim();
     if (!name) return res.status(400).json({ error: 'name required' });
+    const duplicate = db.brands.findOne((entry) => entry.id !== brand.id && entry.name.toLowerCase() === name.toLowerCase());
+    if (duplicate) return res.status(409).json({ error: 'มีชื่อแบรนด์นี้อยู่แล้ว' });
     patch.name = name;
   }
   if (req.body?.logoUrl !== undefined) patch.logoUrl = req.body.logoUrl.trim() || null;
   db.brands.update(brand.id, patch);
+
+  const renamedTo = patch.name || oldName;
+  db.projects
+    .find((project) => (project.brand || '').trim().toLowerCase() === oldName.trim().toLowerCase())
+    .forEach((project) => db.projects.update(project.id, {
+      brand: renamedTo,
+      ...(req.body?.logoUrl !== undefined ? { logoUrl: patch.logoUrl || '' } : {}),
+    }));
+  db.aeTasks
+    .find((task) => (task.project || '').trim().toLowerCase() === oldName.trim().toLowerCase())
+    .forEach((task) => db.aeTasks.update(task.id, { project: renamedTo }));
+
   res.json({ brand: db.brands.byId(brand.id) });
 });
 

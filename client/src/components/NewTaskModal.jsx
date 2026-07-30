@@ -11,7 +11,7 @@ const effort = (d) => (Number(d.estDays) || 0) * STD_DAY + (Number(d.estHours) |
 
 export default function NewTaskModal({ open, onClose, project, users, currentUser, onCreated }) {
   const pms = users.filter((u) => u.role === 'pm' || u.role === 'admin');
-  const assignees = users.filter((u) => !['pm', 'admin'].includes(u.role));
+  const assignees = users.filter((u) => !['pm', 'admin', 'ae'].includes(u.role) && !u.disabled);
 
   const [form, setForm] = useState(null);
   const [drafts, setDrafts] = useState([]);
@@ -76,6 +76,7 @@ export default function NewTaskModal({ open, onClose, project, users, currentUse
     e.preventDefault();
     setError(''); setBusy(true);
     try {
+      if (!project?.id) throw new Error('ไม่พบโปรเจกต์ปลายทาง กรุณาปิดหน้าต่างและเลือกโปรเจกต์ใหม่');
       const { task, calendarWarning } = await api.createTask({
         projectId: project.id,
         ...form,
@@ -98,8 +99,16 @@ export default function NewTaskModal({ open, onClose, project, users, currentUse
 
   return (
     <Modal open={open} onClose={onClose} width="max-w-4xl" z="z-[60]">
-      <ModalHeader title={`สร้างงานใหม่ — ${project?.brand}`} icon={<Plus size={18} className="text-blue-600" />} onClose={onClose} />
+      <ModalHeader title="สร้างงานใหม่" icon={<Plus size={18} className="text-blue-600" />} onClose={onClose} />
       <form onSubmit={submit} className="flex-1 overflow-y-auto">
+        <div className="mx-6 mt-5 p-3.5 rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/30 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-blue-500">โปรเจกต์ปลายทาง</p>
+            <p className="text-sm font-black text-blue-900 dark:text-blue-100 mt-0.5 truncate">{project?.brand || '—'} · {project?.name || '—'}</p>
+            <p className="text-[10px] text-blue-600/80 dark:text-blue-300/80 mt-1">งานและไฟล์ทั้งหมดจะถูกบันทึกภายใต้โปรเจกต์นี้เท่านั้น</p>
+          </div>
+          <span className="shrink-0 px-2.5 py-1 rounded-full bg-white dark:bg-zinc-900 border border-blue-200 dark:border-blue-800 text-[9px] font-bold text-blue-600 dark:text-blue-300">ล็อกโปรเจกต์แล้ว</span>
+        </div>
         <div className="grid grid-cols-3 gap-0">
           {/* left: form */}
           <div className="col-span-2 p-6 space-y-4 border-r border-gray-100">
@@ -224,7 +233,7 @@ export default function NewTaskModal({ open, onClose, project, users, currentUse
 
         <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3 bg-white sticky bottom-0">
           <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-bold text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">ยกเลิก</button>
-          <button type="submit" disabled={busy || !form.assigneeId} className="px-5 py-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-60 shadow-sm">
+          <button type="submit" disabled={busy || !form.assigneeId || !project?.id} className="px-5 py-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-60 shadow-sm">
             {busy ? 'กำลังสร้าง…' : 'สร้างงาน'}
           </button>
         </div>
