@@ -7,7 +7,7 @@ import { fmtTime } from '../utils.js';
 const ICON = {
   critical: <AlertCircle size={16} className="text-red-500" />,
   warning: <AlertTriangle size={16} className="text-amber-500" />,
-  info: <Info size={16} className="text-blue-500" />,
+  info: <Info size={16} className="text-violet-500" />,
 };
 
 export default function NotificationBell({ onNavigate }) {

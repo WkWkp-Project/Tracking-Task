@@ -2,18 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, AlertTriangle, CalendarDays } from 'lucide-react';
 import api from '../api/client.js';
 import { Avatar } from './ui.jsx';
-import { fmtDate } from '../utils.js';
+import { fmtDate, monthGrid, todayKey } from '../utils.js';
 
 const WEEKDAYS = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
-
-// build a YYYY-MM-DD key anchored at UTC-noon (matches the server's day keys)
-function keyOf(y, m, d) {
-  return new Date(Date.UTC(y, m, d, 12)).toISOString().slice(0, 10);
-}
-function todayKey() {
-  const n = new Date();
-  return keyOf(n.getFullYear(), n.getMonth(), n.getDate());
-}
 
 export default function CalendarView({ projects, onOpenTask, defaultAssigneeId }) {
   const now = new Date();
@@ -22,22 +13,7 @@ export default function CalendarView({ projects, onOpenTask, defaultAssigneeId }
   const [selectedId, setSelectedId] = useState(defaultAssigneeId || null);
   const [loading, setLoading] = useState(false);
 
-  // 6-week grid covering the month
-  const grid = useMemo(() => {
-    const first = new Date(Date.UTC(cursor.y, cursor.m, 1, 12));
-    const startDow = first.getUTCDay();
-    const cells = [];
-    for (let i = 0; i < 42; i++) {
-      const d = new Date(first);
-      d.setUTCDate(1 - startDow + i);
-      cells.push({
-        key: d.toISOString().slice(0, 10),
-        day: d.getUTCDate(),
-        inMonth: d.getUTCMonth() === cursor.m,
-      });
-    }
-    return cells;
-  }, [cursor]);
+  const grid = useMemo(() => monthGrid(cursor.y, cursor.m), [cursor]);
 
   const rangeFrom = grid[0].key;
   const rangeTo = grid[grid.length - 1].key;

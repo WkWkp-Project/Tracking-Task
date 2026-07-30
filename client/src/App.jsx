@@ -4,6 +4,7 @@ import { useAuth } from './context/AuthContext.jsx';
 import Login from './pages/Login.jsx';
 import AuthCallback from './pages/AuthCallback.jsx';
 import Dashboard from './pages/Dashboard.jsx';
+import RoleSelect from './pages/RoleSelect.jsx';
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -15,6 +16,7 @@ function Protected({ children }) {
       </div>
     );
   if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
+  if (user.roleConfirmed === false) return <RoleSelect />;
   return children;
 }
 

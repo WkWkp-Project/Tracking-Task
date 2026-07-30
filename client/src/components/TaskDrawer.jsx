@@ -83,7 +83,7 @@ export default function TaskDrawer({ taskId, users, project, googleStatus, onClo
               </span>
             </div>
             <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
-              <div className={`h-full ${task.loggedHours > task.estimatedHours ? 'bg-red-500' : 'bg-blue-500'}`}
+              <div className={`h-full ${task.loggedHours > task.estimatedHours ? 'bg-red-500' : 'bg-violet-500'}`}
                 style={{ width: `${Math.min(100, (task.loggedHours / (task.estimatedHours || 1)) * 100)}%` }} />
             </div>
             <div className="flex items-center gap-2 mt-3 text-[11px]">
@@ -315,7 +315,7 @@ function Briefs({ task, onReload }) {
     await api.addAttachment(task.id, { name, type, url });
     onReload();
   };
-  const ICON = { pdf: <FileText size={15} className="text-red-500" />, image: <ImageIcon size={15} className="text-blue-500" />, video: <PlaySquare size={15} className="text-indigo-500" />, link: <LinkIcon size={15} className="text-emerald-500" /> };
+  const ICON = { pdf: <FileText size={15} className="text-red-500" />, image: <ImageIcon size={15} className="text-violet-500" />, video: <PlaySquare size={15} className="text-indigo-500" />, link: <LinkIcon size={15} className="text-emerald-500" /> };
   return (
     <div>
       <button onClick={add} className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1 mb-3"><Plus size={12} /> เพิ่ม brief / reference</button>

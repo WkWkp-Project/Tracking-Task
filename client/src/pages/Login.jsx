@@ -35,13 +35,13 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-600 to-indigo-700 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-sidebar via-blue-800 to-emerald-600 p-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
-        <div className="bg-blue-600 px-8 py-6 flex items-center gap-3">
-          <LayoutDashboard className="text-white" size={26} />
+        <div className="bg-sidebar px-8 py-6 flex items-center gap-3">
+          <LayoutDashboard className="text-primary" size={26} />
           <div>
-            <h1 className="text-xl font-bold text-white">PM Hub</h1>
-            <p className="text-blue-100 text-xs">Workspace สำหรับทีมครีเอทีฟ</p>
+            <h1 className="text-xl font-bold text-white font-poppins tracking-wide">Tracking Task</h1>
+            <p className="text-sidebar-text text-xs">Workspace สำหรับทีมครีเอทีฟ</p>
           </div>
         </div>
 

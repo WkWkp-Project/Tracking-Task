@@ -16,6 +16,7 @@ import googleRoutes from './routes/google.routes.js';
 import workloadRoutes from './routes/workload.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import aeRoutes from './routes/ae.routes.js';
+import brandsRoutes from './routes/brands.routes.js';
 import { startScheduler } from './services/scheduler.js';
 
 await ensureSeed();
@@ -38,6 +39,7 @@ app.use('/api/google', googleRoutes);
 app.use('/api/workload', workloadRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/ae', aeRoutes);
+app.use('/api/brands', brandsRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error('[error]', err);

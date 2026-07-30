@@ -14,6 +14,9 @@ export const config = {
   port: Number(process.env.SERVER_PORT || process.env.PORT) || 4000,
   clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
   jwtSecret: process.env.JWT_SECRET || 'dev-insecure-secret-change-me',
+  // chat messages are encrypted at rest with this key — set CHAT_ENCRYPTION_KEY
+  // in production so a copy of db.json alone can't be read (even by an admin)
+  chatEncryptionKey: process.env.CHAT_ENCRYPTION_KEY || 'dev-insecure-chat-key-change-me',
   admin: {
     email: process.env.ADMIN_EMAIL || 'admin@wkwkp.com',
     password: process.env.ADMIN_PASSWORD || 'admin1234',

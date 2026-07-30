@@ -44,6 +44,7 @@ export const api = {
   googleStatus: () => request('GET', '/auth/google/status'),
   changePassword: (currentPassword, newPassword) =>
     request('POST', '/auth/change-password', { currentPassword, newPassword }),
+  setRole: (role) => request('POST', '/auth/set-role', { role }),
 
   // users
   users: () => request('GET', '/users'),
@@ -77,6 +78,9 @@ export const api = {
   conversations: () => request('GET', '/chat/conversations'),
   messages: (channelKey) => request('GET', `/chat/messages?channelKey=${encodeURIComponent(channelKey)}`),
   sendMessage: (b) => request('POST', '/chat/messages', b),
+  deleteMessage: (id) => request('DELETE', `/chat/messages/${id}`),
+  groups: () => request('GET', '/chat/groups'),
+  createGroup: (b) => request('POST', '/chat/groups', b),
 
   // notifications
   notifications: () => request('GET', '/notifications'),
@@ -88,6 +92,12 @@ export const api = {
   createAeTask: (b) => request('POST', '/ae', b),
   updateAeTask: (id, b) => request('PATCH', `/ae/${id}`, b),
   deleteAeTask: (id) => request('DELETE', `/ae/${id}`),
+
+  // brands (shared registry linking PM projects + AE work under one name)
+  brands: () => request('GET', '/brands'),
+  createBrand: (b) => request('POST', '/brands', b),
+  updateBrand: (id, b) => request('PATCH', `/brands/${id}`, b),
+  deleteBrand: (id) => request('DELETE', `/brands/${id}`),
 
   // admin
   runReminders: () => request('POST', '/admin/run-reminders', { force: true }),

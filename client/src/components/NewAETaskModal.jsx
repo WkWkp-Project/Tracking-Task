@@ -3,13 +3,14 @@ import { Plus } from 'lucide-react';
 import api from '../api/client.js';
 import { Modal, ModalHeader } from './ui.jsx';
 import { AE_PRIORITY, AE_STATUS, AE_MANHOUR } from '../utils.js';
+import { resolveBrandName } from '../brand.js';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const plus = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const estFromManHour = (mh) => (mh === '<0.5' ? 0.5 : Number(mh) || 0);
 const KNOWN_PROJECTS = ['AE work', 'New client', 'Falcon', 'Thychef', 'Kirin', 'Tulip', 'Debic'];
 
-export default function NewAETaskModal({ open, onClose, users, presetInChargeId, existingProjects = [], onCreated }) {
+export default function NewAETaskModal({ open, onClose, users, brands = [], presetInChargeId, existingProjects = [], onCreated }) {
   const aePeople = users.filter((u) => u.role === 'ae');
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -38,13 +39,14 @@ export default function NewAETaskModal({ open, onClose, users, presetInChargeId,
   if (!open || !form) return null;
 
   const setManHour = (mh) => setForm((f) => ({ ...f, manHour: mh, estWorkday: estFromManHour(mh) }));
-  const projectOptions = [...new Set([...KNOWN_PROJECTS, ...existingProjects])];
+  const projectOptions = [...new Set([...brands.map((b) => b.name), ...KNOWN_PROJECTS, ...existingProjects])];
 
   const submit = async (e) => {
     e.preventDefault();
     setError(''); setBusy(true);
     try {
-      const { task } = await api.createAeTask({ ...form, estWorkday: Number(form.estWorkday) || 0 });
+      const project = await resolveBrandName(form.project, brands);
+      const { task } = await api.createAeTask({ ...form, project, estWorkday: Number(form.estWorkday) || 0 });
       onCreated?.(task);
       onClose();
     } catch (err) {

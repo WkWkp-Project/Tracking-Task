@@ -34,6 +34,7 @@ function PillSelect({ value, onChange, options, className = '' }) {
 export default function AEBoard({ users, currentUser }) {
   const aePeople = useMemo(() => users.filter((u) => u.role === 'ae'), [users]);
   const [rows, setRows] = useState(null);
+  const [brands, setBrands] = useState([]);
   const [filter, setFilter] = useState('all');
   const [showNewTask, setShowNewTask] = useState(false);
 
@@ -41,7 +42,11 @@ export default function AEBoard({ users, currentUser }) {
     const { tasks } = await api.aeTasks();
     setRows(tasks);
   };
-  useEffect(() => { load(); }, []);
+  const loadBrands = async () => {
+    const { brands } = await api.brands();
+    setBrands(brands);
+  };
+  useEffect(() => { load(); loadBrands(); }, []);
 
   const projectOptions = useMemo(() => {
     const set = new Set(KNOWN_PROJECTS);
@@ -205,9 +210,10 @@ export default function AEBoard({ users, currentUser }) {
         open={showNewTask}
         onClose={() => setShowNewTask(false)}
         users={users}
+        brands={brands}
         presetInChargeId={filter !== 'all' ? filter : null}
         existingProjects={projectOptions}
-        onCreated={(task) => setRows((rs) => [task, ...(rs || [])])}
+        onCreated={(task) => { setRows((rs) => [task, ...(rs || [])]); loadBrands(); }}
       />
     </div>
   );

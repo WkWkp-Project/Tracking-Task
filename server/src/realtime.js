@@ -6,6 +6,7 @@ import { verifyToken } from './auth/jwt.js';
 import db from './db.js';
 import { config } from './config.js';
 import { dmChannelKey } from './services/chat.js';
+import { encryptText, decryptText } from './services/crypto.js';
 
 let io = null;
 
@@ -30,7 +31,7 @@ export function initRealtime(httpServer) {
     broadcastPresence();
 
     // Real-time chat send (also persisted)
-    socket.on('chat:send', ({ channelType, channelKey, body, taskId } = {}, ack) => {
+    socket.on('chat:send', ({ channelType, channelKey, body, taskId, attachment } = {}, ack) => {
       if (!body || !body.trim()) return ack?.({ error: 'empty' });
       const msg = saveMessage({
         senderId: socket.userId,
@@ -38,9 +39,18 @@ export function initRealtime(httpServer) {
         channelKey,
         body: body.trim(),
         taskId: taskId || null,
+        attachment: attachment || null,
       });
       emitMessage(msg);
       ack?.({ ok: true, message: msg });
+    });
+
+    // Sender unsends a message (24h window enforced by the REST route which
+    // emits this same event — exposed here too for socket-only callers)
+    socket.on('chat:delete', ({ id } = {}, ack) => {
+      const removed = deleteMessage(id, socket.userId);
+      if (removed) { emitDeleted(removed); ack?.({ ok: true }); }
+      else ack?.({ error: 'not allowed' });
     });
 
     socket.on('chat:typing', ({ channelKey, to } = {}) => {
@@ -56,18 +66,37 @@ export function initRealtime(httpServer) {
   return io;
 }
 
-export function saveMessage({ senderId, channelType, channelKey, body, taskId }) {
-  const msg = {
+// Body is encrypted before it touches disk (see services/crypto.js) — the
+// returned/emitted object carries the plaintext for immediate delivery.
+export function saveMessage({ senderId, channelType, channelKey, body, taskId, attachment }) {
+  const record = {
     id: `msg_${Date.now()}_${Math.floor(Math.random() * 1e4)}`,
     senderId,
     channelType,
     channelKey,
     taskId: taskId || null,
-    body,
+    attachment: attachment || null,
+    bodyEnc: encryptText(body),
     createdAt: new Date().toISOString(),
     readBy: [senderId],
   };
-  return db.messages.insert(msg);
+  db.messages.insert(record);
+  const { bodyEnc, ...rest } = record;
+  return { ...rest, body };
+}
+
+// Turn a stored (encrypted) record into the plaintext shape sent to clients.
+// Messages saved before encryption shipped still have a plain `body` — pass
+// those through as-is instead of trying to decrypt a field that isn't there.
+export function decryptMessage(record) {
+  const { bodyEnc, ...rest } = record;
+  if (!bodyEnc) return rest;
+  return { ...rest, body: decryptText(bodyEnc) };
+}
+
+function groupMemberIds(channelKey) {
+  const group = db.groups.byId(channelKey.replace('group:', ''));
+  return group?.memberIds || [];
 }
 
 // Push a chat message to the right recipients
@@ -76,9 +105,36 @@ export function emitMessage(msg) {
   if (msg.channelType === 'dm') {
     const [a, b] = msg.channelKey.split('::');
     io.to(`user:${a}`).to(`user:${b}`).emit('chat:message', msg);
+  } else if (msg.channelType === 'group') {
+    io.to(groupMemberIds(msg.channelKey).map((uid) => `user:${uid}`)).emit('chat:message', msg);
   } else {
     // task/project channel -> notify everyone connected (clients filter by channelKey)
     io.emit('chat:message', msg);
+  }
+}
+
+const UNSEND_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// Sender-only, silent hard delete — only within 24h of sending.
+// Returns the removed record (for targeted socket emit) or null if not allowed.
+export function deleteMessage(id, requesterId) {
+  const msg = db.messages.byId(id);
+  if (!msg || msg.senderId !== requesterId) return null;
+  if (Date.now() - new Date(msg.createdAt).getTime() > UNSEND_WINDOW_MS) return null;
+  db.messages.remove(id);
+  return msg;
+}
+
+export function emitDeleted(msg) {
+  if (!io) return;
+  const payload = { id: msg.id, channelKey: msg.channelKey };
+  if (msg.channelType === 'dm') {
+    const [a, b] = msg.channelKey.split('::');
+    io.to(`user:${a}`).to(`user:${b}`).emit('chat:deleted', payload);
+  } else if (msg.channelType === 'group') {
+    io.to(groupMemberIds(msg.channelKey).map((uid) => `user:${uid}`)).emit('chat:deleted', payload);
+  } else {
+    io.emit('chat:deleted', payload);
   }
 }
 

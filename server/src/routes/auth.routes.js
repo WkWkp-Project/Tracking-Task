@@ -5,7 +5,10 @@ import db from '../db.js';
 import { config, googleConfigured } from '../config.js';
 import { signToken, publicUser, requireAuth } from '../auth/jwt.js';
 import { getAuthUrl, makeOAuthClient, GOOGLE_SCOPES } from '../auth/google.js';
-import { newUser } from '../services/users.js';
+import { newUser, ROLES } from '../services/users.js';
+
+// roles a user may pick for themselves via /auth/set-role (never 'admin')
+const SELF_ROLES = ROLES.filter((r) => r !== 'admin');
 
 const router = Router();
 
@@ -39,6 +42,15 @@ router.post('/change-password', requireAuth, async (req, res) => {
   const passwordHash = await bcrypt.hash(newPassword, 10);
   db.users.update(req.user.id, { passwordHash });
   res.json({ ok: true });
+});
+
+// ── Self-service role pick (first-login gate — never allows 'admin') ─────────
+router.post('/set-role', requireAuth, (req, res) => {
+  const { role } = req.body || {};
+  if (!SELF_ROLES.includes(role)) return res.status(400).json({ error: 'invalid role' });
+  db.users.update(req.user.id, { role, roleConfirmed: true });
+  const updated = db.users.byId(req.user.id);
+  res.json({ token: signToken(updated), user: publicUser(updated) });
 });
 
 // ── Google OAuth config status (for the UI to show/hide the button) ──────────
@@ -76,11 +88,12 @@ router.get('/google/callback', async (req, res) => {
 
     let user = db.users.findOne((u) => u.email.toLowerCase() === email);
     if (!user) {
+      // self-provisioned via Google — real role is picked on first login, not guessed
       user = newUser({
         name: profile.name || email.split('@')[0],
         email,
-        role: 'creative',
         avatarUrl: profile.picture || null,
+        roleConfirmed: false,
       });
       db.users.insert(user);
     }

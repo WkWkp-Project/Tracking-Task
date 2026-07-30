@@ -39,6 +39,7 @@ router.patch('/:id', requireAdmin, async (req, res) => {
   if (role !== undefined) {
     if (!ROLES.includes(role)) return res.status(400).json({ error: 'invalid role' });
     patch.role = role;
+    patch.roleConfirmed = true; // admin assigning a role is authoritative — clears the self-pick gate
   }
   if (capacityHoursPerDay !== undefined) patch.capacityHoursPerDay = Number(capacityHoursPerDay) || 8;
   if (disabled !== undefined) patch.disabled = !!disabled;

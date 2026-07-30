@@ -20,6 +20,8 @@ const EMPTY = {
   notifications: [],
   timeLogs: [],      // individual hour entries logged against a task/draft
   aeTasks: [],       // Account-Executive spreadsheet rows (flat, single deadline)
+  brands: [],        // shared brand registry — canonical names linking PM + AE work
+  groups: [],        // chat groups: { id, name, memberIds[], createdBy, createdAt }
   meta: { version: 1 },
 };
 
@@ -132,6 +134,8 @@ export const db = {
   notifications: new Collection('notifications'),
   timeLogs: new Collection('timeLogs'),
   aeTasks: new Collection('aeTasks'),
+  brands: new Collection('brands'),
+  groups: new Collection('groups'),
   raw: state,
   persist,
   flush,
