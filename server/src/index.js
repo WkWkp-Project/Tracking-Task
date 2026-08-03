@@ -1,7 +1,7 @@
 import http from 'node:http';
 import express from 'express';
 import cors from 'cors';
-import { config, googleConfigured } from './config.js';
+import { config, googleConfigured, validateRuntimeConfig } from './config.js';
 import db from './db.js';
 import { initRealtime } from './realtime.js';
 import { ensureSeed } from './seed.js';
@@ -18,12 +18,25 @@ import adminRoutes from './routes/admin.routes.js';
 import aeRoutes from './routes/ae.routes.js';
 import brandsRoutes from './routes/brands.routes.js';
 import { startScheduler } from './services/scheduler.js';
+import { errorHandler } from './http.js';
 
+validateRuntimeConfig();
 await ensureSeed();
 
 const app = express();
+app.disable('x-powered-by');
+app.use((_req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    'Cross-Origin-Resource-Policy': 'same-origin',
+  });
+  next();
+});
 app.use(cors({ origin: config.clientOrigin, credentials: true }));
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: Math.ceil(config.chatAttachmentMaxBytes * 1.5) + 1024 }));
 
 app.get('/api/health', (_req, res) =>
   res.json({ ok: true, googleConfigured, time: new Date().toISOString() })
@@ -41,10 +54,10 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/ae', aeRoutes);
 app.use('/api/brands', brandsRoutes);
 
-app.use((err, _req, res, _next) => {
-  console.error('[error]', err);
-  res.status(500).json({ error: 'Internal server error' });
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'API endpoint not found', code: 'NOT_FOUND' });
 });
+app.use(errorHandler);
 
 const server = http.createServer(app);
 initRealtime(server);

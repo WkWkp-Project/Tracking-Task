@@ -2,9 +2,11 @@ import { Router } from 'express';
 import { nanoid } from 'nanoid';
 import db from '../db.js';
 import { requireAuth, publicUser } from '../auth/jwt.js';
-import { dmChannelKey } from '../services/chat.js';
+import { canAccessDmChannel, dmChannelKey } from '../services/chat.js';
 import { saveMessage, decryptMessage, deleteMessage, emitMessage, emitDeleted } from '../realtime.js';
 import { notify } from '../services/notify.js';
+import { config } from '../config.js';
+import { validateChatAttachment } from '../services/chatAttachments.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -12,17 +14,29 @@ router.use(requireAuth);
 // List DM conversations for the current user (one entry per other member)
 router.get('/conversations', (req, res) => {
   const me = req.user.id;
-  const others = db.users.all().filter((u) => u.id !== me && !u.disabled);
+  const others = [
+    req.user,
+    ...db.users.all().filter((user) => user.id !== me && !user.disabled),
+  ];
   const convos = others.map((u) => {
     const ck = dmChannelKey(me, u.id);
     const msgs = db.messages
       .find((m) => m.channelType === 'dm' && m.channelKey === ck)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const last = msgs[msgs.length - 1] || null;
-    const unread = msgs.filter((m) => m.senderId !== me && !m.readBy?.includes(me)).length;
-    return { user: publicUser(u), channelKey: ck, lastMessage: last ? decryptMessage(last) : null, unread };
+    const unread = msgs.filter((message) => !message.readBy?.includes(me)).length;
+    return {
+      user: publicUser(u),
+      self: u.id === me,
+      channelKey: ck,
+      lastMessage: last ? decryptMessage(last) : null,
+      unread,
+    };
   });
-  convos.sort((a, b) => (b.lastMessage?.createdAt || '').localeCompare(a.lastMessage?.createdAt || ''));
+  convos.sort((a, b) => {
+    if (a.self !== b.self) return a.self ? -1 : 1;
+    return (b.lastMessage?.createdAt || '').localeCompare(a.lastMessage?.createdAt || '');
+  });
   res.json({ conversations: convos });
 });
 
@@ -67,6 +81,8 @@ router.get('/messages', (req, res) => {
     const group = db.groups.byId(channelKey.slice('group:'.length));
     if (!group || !group.memberIds.includes(req.user.id))
       return res.status(403).json({ error: 'not a member of this group' });
+  } else if (!canAccessDmChannel(req.user.id, channelKey)) {
+    return res.status(403).json({ error: 'not a participant in this conversation' });
   }
   const msgs = db.messages
     .find((m) => m.channelKey === channelKey)
@@ -86,12 +102,27 @@ router.post('/messages', (req, res) => {
   const { channelType = 'dm', channelKey, body, taskId, attachment, to } = req.body || {};
   if (!body || !body.trim()) return res.status(400).json({ error: 'body required' });
   let ck = channelKey;
-  if (channelType === 'dm' && to) ck = dmChannelKey(req.user.id, to);
+  if (channelType === 'dm' && to) {
+    const target = db.users.byId(to);
+    if (!target || target.disabled) return res.status(400).json({ error: 'recipient unavailable' });
+    ck = dmChannelKey(req.user.id, target.id);
+  }
   if (!ck) return res.status(400).json({ error: 'channelKey or to required' });
-  if (channelType === 'group') {
+  if (channelType === 'dm' && !canAccessDmChannel(req.user.id, ck)) {
+    return res.status(403).json({ error: 'not a participant in this conversation' });
+  } else if (channelType === 'group') {
     const group = db.groups.byId(ck.slice('group:'.length));
     if (!group || !group.memberIds.includes(req.user.id))
       return res.status(403).json({ error: 'not a member of this group' });
+  } else if (!['dm', 'group'].includes(channelType)) {
+    return res.status(400).json({ error: 'invalid channel type' });
+  }
+
+  let safeAttachment = null;
+  try {
+    safeAttachment = validateChatAttachment(attachment, config.chatAttachmentMaxBytes);
+  } catch (error) {
+    return res.status(400).json({ error: error.message, code: 'INVALID_ATTACHMENT' });
   }
 
   const msg = saveMessage({
@@ -100,7 +131,7 @@ router.post('/messages', (req, res) => {
     channelKey: ck,
     body: body.trim(),
     taskId: taskId || null,
-    attachment: attachment || null,
+    attachment: safeAttachment,
   });
   emitMessage(msg);
 

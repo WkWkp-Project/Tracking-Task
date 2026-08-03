@@ -14,7 +14,36 @@ const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const LOGIN_CODE_TTL_MS = 60 * 1000;
 const pendingGoogleStates = new Map();
 const pendingLoginCodes = new Map();
+const failedLogins = new Map();
 const router = Router();
+
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 10;
+
+function loginKey(req, email) {
+  return `${req.ip || req.socket.remoteAddress || 'unknown'}:${String(email || '').toLowerCase()}`;
+}
+
+function checkLoginLimit(key) {
+  const now = Date.now();
+  const entry = failedLogins.get(key);
+  if (!entry || entry.resetAt <= now) {
+    failedLogins.delete(key);
+    return false;
+  }
+  return entry.count >= LOGIN_MAX_ATTEMPTS;
+}
+
+function recordLoginFailure(key) {
+  const now = Date.now();
+  const current = failedLogins.get(key);
+  const entry =
+    current && current.resetAt > now
+      ? current
+      : { count: 0, resetAt: now + LOGIN_WINDOW_MS };
+  entry.count += 1;
+  failedLogins.set(key, entry);
+}
 
 function pruneOAuthEntries() {
   const now = Date.now();
@@ -87,12 +116,25 @@ function redirectToClient(res, params, origin = config.clientOrigin) {
 router.post('/login', async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'email & password required' });
+  const key = loginKey(req, email);
+  if (checkLoginLimit(key)) {
+    return res.status(429).json({
+      error: 'Too many failed login attempts. Try again later.',
+      code: 'LOGIN_RATE_LIMITED',
+    });
+  }
   const user = db.users.findOne((item) => item.email.toLowerCase() === String(email).toLowerCase());
-  if (!user || !user.passwordHash)
+  if (!user || !user.passwordHash) {
+    recordLoginFailure(key);
     return res.status(401).json({ error: 'Invalid credentials' });
+  }
   const ok = await bcrypt.compare(password, user.passwordHash);
-  if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+  if (!ok) {
+    recordLoginFailure(key);
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
   if (user.disabled) return res.status(403).json({ error: 'Account disabled' });
+  failedLogins.delete(key);
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 

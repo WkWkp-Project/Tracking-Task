@@ -1,21 +1,40 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Send, X, MessageSquare, Circle, Paperclip, Tag, Trash2, Users, Plus, Lock } from 'lucide-react';
+import { Send, X, MessageSquare, Circle, Paperclip, Tag, Trash2, Users, Plus, Lock, NotebookPen, Bot, SmilePlus, Download, FileText, Film, Search } from 'lucide-react';
 import api from '../api/client.js';
 import { getSocket } from '../socket.js';
 import { Avatar } from './ui.jsx';
 import { fmtTime } from '../utils.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import {
+  directGifUrl,
+  EMOJI_CATEGORIES,
+  normalizeEmoticonsForDisplay,
+  searchEmojiCategories,
+} from '../chatFormatting.js';
+import {
+  attachmentCategory,
+  CHAT_ATTACHMENT_ACCEPT,
+  DEFAULT_CHAT_ATTACHMENT_MAX_BYTES,
+  validateChatFile,
+} from '../chatAttachments.js';
 
 const UNSEND_WINDOW_MS = 24 * 60 * 60 * 1000;
-const MAX_CHAT_FILE_BYTES = 3 * 1024 * 1024;
+const MAX_CHAT_FILE_BYTES =
+  Number(import.meta.env?.VITE_CHAT_ATTACHMENT_MAX_BYTES) || DEFAULT_CHAT_ATTACHMENT_MAX_BYTES;
 function dmKey(a, b) { return [a, b].sort().join('::'); }
 
 function readChatFile(file) {
   return new Promise((resolve, reject) => {
     if (!file) return reject(new Error('ไม่พบไฟล์'));
-    if (file.size > MAX_CHAT_FILE_BYTES) return reject(new Error('ไฟล์ต้องมีขนาดไม่เกิน 3 MB'));
+    if (file.size > MAX_CHAT_FILE_BYTES) return reject(new Error(`ไฟล์ต้องมีขนาดไม่เกิน ${Math.ceil(MAX_CHAT_FILE_BYTES / 1024 / 1024)} MB`));
+    let metadata;
+    try {
+      metadata = validateChatFile(file, MAX_CHAT_FILE_BYTES);
+    } catch (error) {
+      return reject(error);
+    }
     const reader = new FileReader();
-    reader.onload = () => resolve({ name: file.name, type: file.type || 'file', url: reader.result });
+    reader.onload = () => resolve({ ...metadata, url: reader.result });
     reader.onerror = () => reject(new Error('อ่านไฟล์ไม่สำเร็จ'));
     reader.readAsDataURL(file);
   });
@@ -32,14 +51,23 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
   const [pendingTaskId, setPendingTaskId] = useState(null);
   const [pendingAttachment, setPendingAttachment] = useState(null);
   const [showTagPicker, setShowTagPicker] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [emojiCategory, setEmojiCategory] = useState('recent');
+  const [emojiSearch, setEmojiSearch] = useState('');
   const [taskFilter, setTaskFilter] = useState('');
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [groupName, setGroupName] = useState('');
   const [groupMemberIds, setGroupMemberIds] = useState([]);
   const bottomRef = useRef(null);
+  const textInputRef = useRef(null);
 
   const taskById = useMemo(() => Object.fromEntries(allTasks.map((t) => [t.id, t])), [allTasks]);
+  const visibleEmojis = useMemo(
+    () => searchEmojiCategories(emojiSearch, emojiCategory),
+    [emojiCategory, emojiSearch]
+  );
   const activeKey = () => (active?.type === 'group' ? active.group.channelKey : active ? dmKey(user.id, active.user.id) : null);
+  const selfChatActive = active?.type === 'dm' && active.user.id === user.id;
 
   const loadLists = async () => {
     try {
@@ -125,7 +153,10 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
     }
   };
 
-  const canUnsend = (m) => m.senderId === user.id && Date.now() - new Date(m.createdAt).getTime() < UNSEND_WINDOW_MS;
+  const canUnsend = (m) =>
+    !m.system &&
+    m.senderId === user.id &&
+    Date.now() - new Date(m.createdAt).getTime() < UNSEND_WINDOW_MS;
   const unsend = async (id) => {
     if (!confirm('ยกเลิกข้อความนี้? จะถูกลบออกจากทุกคนแบบเงียบๆ')) return;
     try {
@@ -205,7 +236,7 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
             </>
           )}
           <p className="px-3 pt-2 pb-1 text-[10px] font-bold text-gray-400 uppercase flex items-center gap-1">
-            <Lock size={9} /> แชทส่วนตัว (1-ต่อ-1)
+            <Lock size={9} /> แชทส่วนตัว
           </p>
           {conversations.map((c) => (
             <button
@@ -213,13 +244,19 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
               onClick={() => openChat(c.user)}
               className={`w-full flex items-center gap-2 px-3 py-2.5 hover:bg-white dark:hover:bg-zinc-800 text-left ${active?.type === 'dm' && active.user.id === c.user.id ? 'bg-white dark:bg-zinc-800' : ''}`}
             >
-              <div className="relative">
-                <Avatar user={c.user} size={32} />
-                <Circle size={9} className={`absolute -bottom-0.5 -right-0.5 ${c.user.online ? 'text-emerald-500 fill-emerald-500' : 'text-gray-300 fill-gray-300'}`} />
-              </div>
+              {c.self ? (
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-700">
+                  <NotebookPen size={15} />
+                </div>
+              ) : (
+                <div className="relative">
+                  <Avatar user={c.user} size={32} />
+                  <Circle size={9} className={`absolute -bottom-0.5 -right-0.5 ${c.user.online ? 'text-emerald-500 fill-emerald-500' : 'text-gray-300 fill-gray-300'}`} />
+                </div>
+              )}
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-gray-800 dark:text-zinc-100 truncate">{c.user.name}</p>
-                <p className="text-[11px] text-gray-400 truncate">{c.lastMessage?.body || 'เริ่มแชต'}</p>
+                <p className="text-xs font-bold text-gray-800 dark:text-zinc-100 truncate">{c.self ? 'บันทึกส่วนตัว' : c.user.name}</p>
+                <p className="text-[11px] text-gray-400 truncate">{c.lastMessage?.body || (c.self ? 'โน้ตและข้อความเตือนของฉัน' : 'เริ่มแชต')}</p>
               </div>
               {c.unread > 0 && <span className="bg-blue-600 text-white text-[10px] font-bold rounded-full px-1.5">{c.unread}</span>}
             </button>
@@ -228,10 +265,10 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
       </div>
 
       {/* thread */}
-      <div className="flex-1 flex flex-col">
+      <div className="min-w-0 flex-1 flex flex-col">
         <div className="px-4 py-3 border-b border-gray-100 dark:border-zinc-800 flex items-center justify-between">
           <span className="font-bold text-sm text-gray-800 dark:text-zinc-100">
-            {active?.type === 'group' ? active.group.name : active?.type === 'dm' ? active.user.name : 'เลือกคนเพื่อเริ่มแชต'}
+            {active?.type === 'group' ? active.group.name : selfChatActive ? 'บันทึกส่วนตัว' : active?.type === 'dm' ? active.user.name : 'เลือกคนเพื่อเริ่มแชต'}
           </span>
           <button onClick={onClose} className="p-1 text-gray-400 hover:bg-gray-100 rounded-full"><X size={16} /></button>
         </div>
@@ -239,15 +276,18 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
           {!active ? (
             <div className="h-full flex items-center justify-center text-gray-400 text-sm">เลือกเพื่อนร่วมงานหรือกลุ่มทางซ้าย</div>
           ) : messages.length === 0 ? (
-            <div className="h-full flex items-center justify-center text-gray-400 text-sm">ยังไม่มีข้อความ</div>
+            <div className="h-full flex items-center justify-center text-gray-400 text-sm">{selfChatActive ? 'จดโน้ตส่วนตัวไว้ที่นี่ได้เลย' : 'ยังไม่มีข้อความ'}</div>
           ) : (
             messages.map((m) => {
-              const mine = m.senderId === user.id;
+              const mine = m.senderId === user.id && !m.system;
               const senderName = active.type === 'group' && !mine ? users.find((u) => u.id === m.senderId)?.name : null;
               const taggedTask = m.taskId ? taskById[m.taskId] : null;
+              const gifUrl = directGifUrl(m.body);
+              const attachmentKind = attachmentCategory(m.attachment);
               return (
                 <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
                   <div className={`group relative max-w-[82%] px-3 py-2 rounded-2xl text-sm ${mine ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 text-gray-800 dark:text-zinc-100 rounded-bl-sm'}`}>
+                    {m.system && <p className="mb-1 flex items-center gap-1 text-[10px] font-bold text-amber-600"><Bot size={11} /> เตือนอัตโนมัติ</p>}
                     {senderName && <p className="text-[10px] font-bold text-indigo-500 mb-0.5">{senderName}</p>}
                     {taggedTask && (
                       <button onClick={() => onOpenTask?.(taggedTask.id)}
@@ -255,12 +295,35 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
                         <Tag size={10} /> {taggedTask.title}
                       </button>
                     )}
-                    <p className="whitespace-pre-wrap break-words">{m.body}</p>
-                    {m.attachment && (
-                      <a href={m.attachment.url} target="_blank" rel="noreferrer"
-                        className={`flex items-center gap-1 text-[11px] mt-1 underline ${mine ? 'text-blue-100' : 'text-blue-600'}`}>
-                        <Paperclip size={10} /> {m.attachment.name}
+                    <p className="whitespace-pre-wrap break-words">{normalizeEmoticonsForDisplay(m.body)}</p>
+                    {gifUrl && (
+                      <a href={gifUrl} target="_blank" rel="noreferrer" className="mt-2 block overflow-hidden rounded-xl border border-black/10 bg-black/5">
+                        <img src={gifUrl} alt="GIF preview" loading="lazy" referrerPolicy="no-referrer" className="max-h-48 w-full object-contain" />
                       </a>
+                    )}
+                    {m.attachment && (
+                      <div className="mt-2 overflow-hidden rounded-xl border border-black/10 bg-black/5">
+                        {attachmentKind === 'image' && (
+                          <a href={m.attachment.url} target="_blank" rel="noreferrer" className="block">
+                            <img src={m.attachment.url} alt={m.attachment.name || 'Image attachment'} loading="lazy" className="max-h-48 w-full object-contain" />
+                          </a>
+                        )}
+                        {attachmentKind === 'video' && (
+                          <video controls preload="metadata" className="max-h-48 w-full bg-black">
+                            <source src={m.attachment.url} type={m.attachment.type} />
+                          </video>
+                        )}
+                        <div className={`flex min-w-0 items-center gap-2 px-2 py-1.5 text-[10px] font-bold ${mine ? 'text-blue-100' : 'text-blue-600'}`}>
+                          {attachmentKind === 'video' ? <Film size={12} /> : attachmentKind === 'image' ? <Paperclip size={12} /> : <FileText size={12} />}
+                          <span className="min-w-0 flex-1 truncate">{m.attachment.name || 'attachment'}</span>
+                          {attachmentKind !== 'archive' && (
+                            <a href={m.attachment.url} target="_blank" rel="noreferrer" className="underline">เปิด</a>
+                          )}
+                          <a href={m.attachment.url} download={m.attachment.name || true} title="ดาวน์โหลด" aria-label={`ดาวน์โหลด ${m.attachment.name || 'ไฟล์'}`}>
+                            <Download size={12} />
+                          </a>
+                        </div>
+                      </div>
                     )}
                     <p className={`text-[9px] mt-1 ${mine ? 'text-blue-100' : 'text-gray-400'}`}>{fmtTime(m.createdAt)}</p>
                     {canUnsend(m) && (
@@ -307,19 +370,87 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
                 </div>
               </div>
             )}
+            {showEmojiPicker && (
+              <div className="absolute bottom-16 left-2 right-2 z-20 min-w-0 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-800 sm:left-auto sm:right-3 sm:w-[340px]">
+                <div
+                  data-testid="emoji-picker"
+                  className="flex max-h-[min(320px,calc(100vh-5rem))] min-w-0 max-w-full flex-col overflow-hidden"
+                >
+                  <div className="flex items-center gap-2 border-b border-gray-100 p-2 dark:border-zinc-700">
+                    <Search size={14} className="shrink-0 text-gray-400" />
+                    <input
+                      value={emojiSearch}
+                      onChange={(event) => setEmojiSearch(event.target.value)}
+                      placeholder="ค้นหาหมวดอีโมจิ…"
+                      aria-label="ค้นหาอีโมจิ"
+                      className="min-w-0 flex-1 bg-transparent text-xs text-gray-800 outline-none dark:text-zinc-100"
+                    />
+                  </div>
+                  <div className="flex shrink-0 gap-0.5 overflow-x-auto border-b border-gray-100 px-1 py-1 dark:border-zinc-700" aria-label="หมวดอีโมจิ">
+                    {EMOJI_CATEGORIES.map((category) => (
+                      <button
+                        key={category.id}
+                        type="button"
+                        title={category.label}
+                        aria-label={`หมวด ${category.label}`}
+                        onClick={() => { setEmojiCategory(category.id); setEmojiSearch(''); }}
+                        className={`grid h-8 min-w-8 shrink-0 place-items-center rounded-lg text-base ${emojiCategory === category.id && !emojiSearch ? 'bg-blue-100 dark:bg-blue-950' : 'hover:bg-gray-100 dark:hover:bg-zinc-700'}`}
+                      >
+                        {category.icon}
+                      </button>
+                    ))}
+                  </div>
+                  <div
+                    className="grid min-h-20 flex-1 gap-1 overflow-x-hidden overflow-y-auto overscroll-contain p-2"
+                    style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(2rem, 1fr))' }}
+                  >
+                    {visibleEmojis.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => {
+                          setText((current) => `${current}${emoji}`);
+                          queueMicrotask(() => textInputRef.current?.focus());
+                        }}
+                        className="grid h-8 min-w-0 place-items-center rounded-lg text-lg hover:bg-blue-50 dark:hover:bg-zinc-700"
+                        aria-label={`เพิ่มอีโมจิ ${emoji}`}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                    {visibleEmojis.length === 0 && (
+                      <p className="col-span-full p-4 text-center text-xs text-gray-400">ไม่พบหมวดอีโมจิ</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
             <form onSubmit={send} className="p-3 flex gap-2 items-center">
-              <label title="แนบไฟล์ (สูงสุด 3 MB)" className="p-2 text-gray-400 hover:text-blue-600 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-full cursor-pointer">
+              <label title={`แนบไฟล์ (สูงสุด ${Math.ceil(MAX_CHAT_FILE_BYTES / 1024 / 1024)} MB)`} className="p-2 text-gray-400 hover:text-blue-600 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-full cursor-pointer">
                 <Paperclip size={16} />
-                <input type="file" className="hidden" onChange={(e) => {
+                <input type="file" accept={CHAT_ATTACHMENT_ACCEPT} className="hidden" onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) attachFile(file);
                   e.target.value = '';
                 }} />
               </label>
               <button type="button" onClick={() => setShowTagPicker((v) => !v)} title="แท็กงาน" className="p-2 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-full"><Tag size={16} /></button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowEmojiPicker((value) => !value);
+                  setShowTagPicker(false);
+                }}
+                title="เพิ่มอีโมจิ"
+                aria-label="เปิดตัวเลือกอีโมจิ"
+                className="p-2 text-gray-400 hover:text-blue-600 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-full"
+              >
+                <SmilePlus size={16} />
+              </button>
               <input
+                ref={textInputRef}
                 value={text} onChange={(e) => setText(e.target.value)}
-                placeholder="พิมพ์ข้อความ…"
+                placeholder={selfChatActive ? 'จดบันทึกส่วนตัว…' : 'พิมพ์ข้อความ…'}
                 className="flex-1 min-w-0 px-3 py-2 text-gray-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-full text-sm outline-none focus:border-blue-500"
               />
               <button type="submit" disabled={!text.trim() && !pendingAttachment} className="p-2.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 disabled:opacity-40"><Send size={16} /></button>

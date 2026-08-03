@@ -1,11 +1,11 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   LayoutDashboard, FolderPlus, Settings, MessageSquare, LogOut,
-  X, CalendarDays, GanttChartSquare, ChevronDown, Moon, Sun, Layers3,
+  X, CalendarDays, GanttChartSquare, ChevronDown, Moon, Sun, Layers3, Columns3,
 } from 'lucide-react';
 import api from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
-import { Avatar } from '../components/ui.jsx';
+import { Avatar, Spinner } from '../components/ui.jsx';
 import NotificationBell from '../components/NotificationBell.jsx';
 import ChatPanel from '../components/ChatPanel.jsx';
 import TeamModal from '../components/TeamModal.jsx';
@@ -19,6 +19,8 @@ import PMDashboard from '../components/dashboard/PMDashboard.jsx';
 import AEDashboard from '../components/dashboard/AEDashboard.jsx';
 import BrandsModal from '../components/BrandsModal.jsx';
 import ProjectTimeline from '../components/ProjectTimeline.jsx';
+import KanbanBoard from '../components/KanbanBoard.jsx';
+import useDashboardData from '../hooks/useDashboardData.js';
 import { resolveBrandName } from '../brand.js';
 import { Pencil, Link as LinkIcon, ClipboardList } from 'lucide-react';
 
@@ -26,6 +28,7 @@ const PM_NAV = [
   { key: 'dashboard-pm', label: 'แดชบอร์ด', icon: LayoutDashboard },
   { key: 'timeline', label: 'ไทม์ไลน์', icon: GanttChartSquare },
   { key: 'calendar', label: 'ปฏิทิน', icon: CalendarDays },
+  { key: 'board', label: 'Kanban', icon: Columns3 },
 ];
 const AE_NAV = [
   { key: 'dashboard-ae', label: 'แดชบอร์ด', icon: LayoutDashboard },
@@ -64,18 +67,29 @@ function NavGroup({ label, items, open, onToggle, view, onSelect }) {
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
-  const [projects, setProjects] = useState([]);
-  const [users, setUsers] = useState([]);
-  const [brands, setBrands] = useState([]);
   const [selected, setSelected] = useState(null);
-  const [tasks, setTasks] = useState([]);
-  const [googleStatus, setGoogleStatus] = useState({ configured: false, linked: false });
+  const {
+    projects,
+    users,
+    brands,
+    googleStatus,
+    status: coreStatus,
+    error: coreError,
+    tasks,
+    taskStatus,
+    taskError,
+    reloadCore: loadCore,
+    reloadTasks: loadTasks,
+    clearTasks,
+  } = useDashboardData(selected?.id);
+  const [boardVersion, setBoardVersion] = useState(0);
 
   const [drawerTaskId, setDrawerTaskId] = useState(null);
   const [drawerProjectId, setDrawerProjectId] = useState(null);
   const [showTeam, setShowTeam] = useState(false);
   const [showBrands, setShowBrands] = useState(false);
   const [showNewTask, setShowNewTask] = useState(false);
+  const [newTaskProject, setNewTaskProject] = useState(null);
   const [showNewProject, setShowNewProject] = useState(false);
   const [showEditProject, setShowEditProject] = useState(false);
   const [aeBrandFilter, setAeBrandFilter] = useState(null);
@@ -98,30 +112,16 @@ export default function Dashboard() {
     setOpenGroups((g) => (aeView ? (g.ae ? g : { ...g, ae: true }) : (g.pm ? g : { ...g, pm: true })));
   }, [view]);
 
-  const loadCore = useCallback(async () => {
-    const [{ projects }, { users }, { brands }, gs] = await Promise.all([
-      api.projects(), api.users(), api.brands(), api.googleIntegrationStatus().catch(() => ({ configured: false, linked: false })),
-    ]);
-    setProjects(projects);
-    setUsers(users);
-    setBrands(brands);
-    setGoogleStatus(gs);
-    setSelected((cur) => cur ? projects.find((project) => project.id === cur.id) || null : null);
-  }, []);
-
-  const loadTasks = useCallback(async (projectId) => {
-    if (!projectId) { setTasks([]); return; }
-    const { tasks } = await api.tasks(`?projectId=${projectId}`);
-    setTasks(tasks);
-  }, []);
-
-  useEffect(() => { loadCore(); }, [loadCore]);
-  useEffect(() => { if (selected) loadTasks(selected.id); }, [selected, loadTasks]);
+  useEffect(() => {
+    setSelected((current) =>
+      current ? projects.find((project) => project.id === current.id) || null : current
+    );
+  }, [projects]);
 
   const handleViewSelect = (targetView) => {
     if (targetView === 'dashboard-pm') {
       setSelected(null);
-      setTasks([]);
+      clearTasks();
       setDrawerTaskId(null);
       setDrawerProjectId(null);
     }
@@ -134,6 +134,12 @@ export default function Dashboard() {
     setDrawerTaskId(null);
     setDrawerProjectId(null);
     setView('timeline');
+  };
+
+  const openNewTask = (project) => {
+    if (!project) return;
+    setNewTaskProject(project);
+    setShowNewTask(true);
   };
 
   const createProject = async (e) => {
@@ -220,6 +226,11 @@ export default function Dashboard() {
                 <h2 className="text-lg font-bold text-gray-900 dark:text-white">งาน AE</h2>
                 <p className="text-[11px] text-gray-500">ตารางงานประสาน — In charge, priority, deadline</p>
               </div>
+            ) : view === 'board' ? (
+              <div className="min-w-0">
+                <h2 className="text-lg font-bold text-gray-900 dark:text-white">บอร์ดงาน PM</h2>
+                <p className="text-[11px] text-gray-500">มุมมองการ์ดของงานชุดเดียวกับ Timeline และปฏิทิน</p>
+              </div>
             ) : (
               <>
                 {selected?.logoUrl && (
@@ -287,6 +298,15 @@ export default function Dashboard() {
                 onManageBrands={() => setShowBrands(true)}
                 onOpenAeBoard={() => { setAeBrandFilter(null); setView('ae'); }}
               />
+            ) : view === 'board' ? (
+              <KanbanBoard
+                users={users}
+                projects={projects}
+                currentUser={user}
+                onOpenTask={(id) => handleNavigate({ type: 'task', id })}
+                onAddTask={(projectId) => openNewTask(projects.find((project) => project.id === projectId))}
+                refreshKey={boardVersion}
+              />
             ) : view === 'calendar' ? (
               <CalendarView projects={projects} onOpenTask={(id) => handleNavigate({ type: 'task', id })} />
             ) : view === 'calendar-ae' ? (
@@ -298,7 +318,7 @@ export default function Dashboard() {
                 project={selected}
                 tasks={tasks}
                 users={users}
-                onAddTask={() => selected && setShowNewTask(true)}
+                onAddTask={() => openNewTask(selected)}
                 onOpenTask={(id) => {
                   setDrawerProjectId(selected?.id || null);
                   setDrawerTaskId(id);
@@ -315,7 +335,10 @@ export default function Dashboard() {
               projects={projects}
               googleStatus={googleStatus}
               onClose={() => { setDrawerTaskId(null); setDrawerProjectId(null); }}
-              onChanged={() => { if (selected?.id) loadTasks(selected.id); }}
+              onChanged={() => {
+                if (selected?.id) loadTasks(selected.id);
+                if (view === 'board') setBoardVersion((value) => value + 1);
+              }}
               onOpenChat={(uid) => setChat({ open: true, presetUserId: uid })}
             />
           )}
@@ -330,11 +353,19 @@ export default function Dashboard() {
         onClose={() => setShowEditProject(false)}
         onSaved={(updated) => { setSelected(updated); loadCore(); }}
       />
-      {selected && (
+      {newTaskProject && (
         <NewTaskModal
-          open={showNewTask} onClose={() => setShowNewTask(false)}
-          project={selected} users={users} currentUser={user}
-          onCreated={(_t, calWarn) => { loadTasks(selected.id); if (calWarn) alert('สร้างงานแล้ว แต่ sync calendar ไม่สำเร็จ: ' + calWarn); }}
+          open={showNewTask}
+          onClose={() => {
+            setShowNewTask(false);
+            setNewTaskProject(null);
+          }}
+          project={newTaskProject} users={users} currentUser={user}
+          onCreated={(_t, calWarn) => {
+            if (selected?.id === newTaskProject.id) loadTasks(newTaskProject.id);
+            if (view === 'board') setBoardVersion((value) => value + 1);
+            if (calWarn) alert('สร้างงานแล้ว แต่ sync calendar ไม่สำเร็จ: ' + calWarn);
+          }}
         />
       )}
 

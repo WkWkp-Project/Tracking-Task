@@ -5,6 +5,8 @@ import { googleConfigured } from '../config.js';
 import { sendEmail } from '../services/gmail.js';
 import { upsertTaskEvent, deleteTaskEvent } from '../services/calendar.js';
 import { notify } from '../services/notify.js';
+import { canContributeToTask } from '../services/taskWorkflow.js';
+import { forbidden } from '../http.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -21,6 +23,12 @@ router.get('/status', (req, res) => {
 router.post('/gmail/send', async (req, res) => {
   const { to, cc, bcc, subject, text, html, attachments, taskId } = req.body || {};
   if (!to || !subject) return res.status(400).json({ error: 'to & subject required' });
+  if (taskId) {
+    const task = db.tasks.byId(taskId);
+    if (!task) return res.status(404).json({ error: 'task not found', code: 'NOT_FOUND' });
+    const project = db.projects.byId(task.projectId);
+    if (!canContributeToTask(req.user, task, project)) throw forbidden();
+  }
   try {
     const result = await sendEmail(req.user, { to, cc, bcc, subject, text, html, attachments });
     // log it into the task's client channel as a record
@@ -44,6 +52,7 @@ router.post('/calendar/sync', async (req, res) => {
   const { taskId } = req.body || {};
   const task = db.tasks.byId(taskId);
   if (!task) return res.status(404).json({ error: 'task not found' });
+  if (!canContributeToTask(req.user, task, db.projects.byId(task.projectId))) throw forbidden();
   try {
     const assignee = db.users.byId(task.assigneeId);
     const pm = db.users.byId(task.pmId);
@@ -59,6 +68,7 @@ router.post('/calendar/unsync', async (req, res) => {
   const { taskId } = req.body || {};
   const task = db.tasks.byId(taskId);
   if (!task) return res.status(404).json({ error: 'task not found' });
+  if (!canContributeToTask(req.user, task, db.projects.byId(task.projectId))) throw forbidden();
   try {
     if (task.calendarEventId) await deleteTaskEvent(req.user, task.calendarEventId);
     db.tasks.update(task.id, { calendarEventId: null, syncCalendar: false });

@@ -5,13 +5,32 @@ import { requireAuth } from '../auth/jwt.js';
 import { detectConflicts, assessRisk } from '../services/riskEngine.js';
 import { notify, notifyMany } from '../services/notify.js';
 import { upsertTaskEvent, deleteTaskEvent } from '../services/calendar.js';
+import {
+  TASK_STATUSES,
+  DRAFT_STATUSES,
+  allowedDraftTransitions,
+  canContributeToTask,
+  canCreateTask,
+  canEditTaskDetails,
+  canTransitionDraft,
+  canTransitionTask,
+  workflowFor,
+} from '../services/taskWorkflow.js';
+import {
+  assertDateRange,
+  assertPlainObject,
+  badRequest,
+  cleanString,
+  dateString,
+  enumValue,
+  finiteNumber,
+  forbidden,
+} from '../http.js';
 
 const router = Router();
 router.use(requireAuth);
 
-export const TASK_STATUSES = [
-  'To Do', 'Draft 1', 'Draft 2', 'Final', 'Client Review', 'Approval', 'Done', 'Cancelled',
-];
+export { TASK_STATUSES };
 
 function isPmWorker(user) {
   return !!user && !user.disabled && !['admin', 'pm', 'ae'].includes(user.role);
@@ -39,15 +58,31 @@ function assigneeOtherTasks(task) {
   return db.tasks.find((t) => t.assigneeId === task.assigneeId && t.id !== task.id);
 }
 
-function decorate(task) {
+function taskProject(task) {
+  return db.projects.byId(task.projectId);
+}
+
+function decorate(task, user = null) {
   const drafts = db.drafts
     .find((dr) => dr.taskId === task.id)
     .sort((a, b) => a.order - b.order)
-    .map((dr) => ({ ...dr, effortHours: draftEffortHours(dr) }));
+    .map((dr) => ({
+      ...dr,
+      effortHours: draftEffortHours(dr),
+      ...(user
+        ? { workflow: { allowedTransitions: allowedDraftTransitions(user, task, dr, taskProject(task)) } }
+        : {}),
+    }));
   const attachments = db.attachments.find((a) => a.taskId === task.id);
   const assignee = db.users.byId(task.assigneeId);
   const risk = assignee ? assessRisk(task, assignee, assigneeOtherTasks(task), drafts) : null;
-  return { ...task, drafts, attachments, risk };
+  return {
+    ...task,
+    drafts,
+    attachments,
+    risk,
+    ...(user ? { workflow: workflowFor(user, task, taskProject(task)) } : {}),
+  };
 }
 
 // risk for a task, loading its drafts (for handlers that don't decorate)
@@ -84,20 +119,52 @@ function makeDraftsFromInput(taskId, draftsInput) {
   }));
 }
 
+function validateDraftsInput(drafts, startDate, endDate) {
+  if (drafts === undefined) return;
+  if (!Array.isArray(drafts) || drafts.length > 20)
+    throw badRequest('VALIDATION_ERROR', 'drafts must be an array with at most 20 items');
+  drafts.forEach((draft, index) => {
+    assertPlainObject(draft, `drafts[${index}]`);
+    cleanString(draft.step, `drafts[${index}].step`, { max: 100 });
+    finiteNumber(draft.estDays, `drafts[${index}].estDays`, { min: 0, max: 365 });
+    finiteNumber(draft.estHours, `drafts[${index}].estHours`, { min: 0, max: 1000 });
+    const due = dateString(draft.dueDate, `drafts[${index}].dueDate`, { nullable: true });
+    if (due && (due < startDate || due > endDate)) {
+      throw badRequest(
+        'INVALID_DRAFT_DATE',
+        `drafts[${index}].dueDate must fall within the task date range`
+      );
+    }
+  });
+}
+
+function requireTaskManager(req, task) {
+  if (!canEditTaskDetails(req.user, task, taskProject(task))) throw forbidden();
+}
+
+function requireTaskContributor(req, task) {
+  if (!canContributeToTask(req.user, task, taskProject(task))) throw forbidden();
+}
+
 // ── List tasks (optionally by project), decorated with drafts + risk ─────────
 router.get('/', (req, res) => {
   const { projectId, assigneeId } = req.query;
   let tasks = db.tasks.all();
   if (projectId) tasks = tasks.filter((t) => t.projectId === projectId);
   if (assigneeId) tasks = tasks.filter((t) => t.assigneeId === assigneeId);
-  res.json({ tasks: tasks.map(decorate) });
+  res.json({ tasks: tasks.map((task) => decorate(task, req.user)) });
 });
 
 // ── Conflict + risk preview (call BEFORE creating to warn the PM) ────────────
 router.post('/conflict-check', (req, res) => {
   const { assigneeId, startDate, endDate, estimatedHours, drafts, taskId } = req.body || {};
+  if (!['admin', 'pm'].includes(req.user.role)) throw forbidden('Only a PM or admin can plan task capacity');
   if (!assigneeId || !startDate || !endDate)
     return res.status(400).json({ error: 'assigneeId, startDate, endDate required' });
+  const validStart = dateString(startDate, 'startDate', { required: true });
+  const validEnd = dateString(endDate, 'endDate', { required: true });
+  assertDateRange(validStart, validEnd);
+  validateDraftsInput(drafts, validStart, validEnd);
   const assignee = db.users.byId(assigneeId);
   if (!isPmWorker(assignee)) return res.status(400).json({ error: 'assignee must be an active PM production worker' });
 
@@ -129,11 +196,12 @@ router.post('/conflict-check', (req, res) => {
 router.get('/:id', (req, res) => {
   const task = db.tasks.byId(req.params.id);
   if (!task) return res.status(404).json({ error: 'not found' });
-  res.json({ task: decorate(task) });
+  res.json({ task: decorate(task, req.user) });
 });
 
 // ── Create task (with drafts) + conflict warning + optional calendar sync ────
 router.post('/', async (req, res) => {
+  assertPlainObject(req.body);
   const {
     projectId, title, description, pmId, assigneeId, status,
     startDate, endDate, priority, syncCalendar, drafts,
@@ -146,8 +214,22 @@ router.post('/', async (req, res) => {
   const project = db.projects.byId(projectId);
   if (!project) return res.status(404).json({ error: 'project not found' });
   if (project.archived) return res.status(409).json({ error: 'cannot create a task in an archived project' });
+  if (!canCreateTask(req.user, project)) throw forbidden('Only the project PM or an admin can create tasks');
   const assignee = db.users.byId(assigneeId);
   if (!isPmWorker(assignee)) return res.status(400).json({ error: 'assignee must be an active PM production worker' });
+  const validTitle = cleanString(title, 'title', { required: true, max: 200 });
+  const validDescription = cleanString(description, 'description', { max: 10000 });
+  const validStart = dateString(startDate, 'startDate', { required: true });
+  const validEnd = dateString(endDate, 'endDate', { required: true });
+  assertDateRange(validStart, validEnd);
+  const validPriority = enumValue(priority, 'priority', ['low', 'normal', 'high']) || 'normal';
+  if (status && status !== 'To Do')
+    throw badRequest('INVALID_INITIAL_STATUS', 'New tasks must start in To Do');
+  validateDraftsInput(drafts, validStart, validEnd);
+  const ownerId = pmId || project.pmId || req.user.id;
+  const owner = db.users.byId(ownerId);
+  if (!owner || owner.disabled || !['pm', 'admin'].includes(owner.role))
+    throw badRequest('INVALID_PM', 'pmId must identify an active PM or admin');
 
   const id = `tsk_${nanoid(8)}`;
   const draftRows = makeDraftsFromInput(id, drafts);
@@ -156,14 +238,14 @@ router.post('/', async (req, res) => {
   const task = {
     id,
     projectId,
-    title,
-    description: description || '',
-    pmId: pmId || req.user.id,
+    title: validTitle,
+    description: validDescription || '',
+    pmId: ownerId,
     assigneeId,
-    status: status || 'To Do',
-    startDate,
-    endDate,
-    priority: priority || 'normal', // low | normal | high
+    status: 'To Do',
+    startDate: validStart,
+    endDate: validEnd,
+    priority: validPriority,
     estimatedHours,
     loggedHours: 0,
     syncCalendar: !!syncCalendar,
@@ -217,23 +299,49 @@ router.post('/', async (req, res) => {
     }
   }
 
-  res.status(201).json({ task: decorate(db.tasks.byId(id)), conflict, risk, calendarWarning });
+  res.status(201).json({ task: decorate(db.tasks.byId(id), req.user), conflict, risk, calendarWarning });
 });
 
 // ── Update task ──────────────────────────────────────────────────────────────
 router.patch('/:id', async (req, res) => {
   const task = db.tasks.byId(req.params.id);
   if (!task) return res.status(404).json({ error: 'not found' });
+  assertPlainObject(req.body);
   const prevStatus = task.status;
   const prevAssigneeId = task.assigneeId;
 
   const fields = ['title', 'description', 'pmId', 'assigneeId', 'status', 'startDate', 'endDate', 'priority', 'syncCalendar'];
   const patch = {};
   for (const f of fields) if (req.body?.[f] !== undefined) patch[f] = req.body[f];
+  const detailFields = fields.filter((field) => field !== 'status');
+  if (detailFields.some((field) => patch[field] !== undefined)) requireTaskManager(req, task);
   if (patch.status && !TASK_STATUSES.includes(patch.status))
     return res.status(400).json({ error: 'invalid status' });
+  if (patch.status && !canTransitionTask(req.user, task, patch.status, taskProject(task))) {
+    throw badRequest(
+      'INVALID_STATUS_TRANSITION',
+      `Cannot move task from ${task.status} to ${patch.status}`,
+      { allowed: workflowFor(req.user, task, taskProject(task)).allowedTransitions }
+    );
+  }
+  if (patch.title !== undefined) patch.title = cleanString(patch.title, 'title', { required: true, max: 200 });
+  if (patch.description !== undefined)
+    patch.description = cleanString(patch.description, 'description', { max: 10000 });
+  if (patch.startDate !== undefined)
+    patch.startDate = dateString(patch.startDate, 'startDate', { required: true });
+  if (patch.endDate !== undefined)
+    patch.endDate = dateString(patch.endDate, 'endDate', { required: true });
+  assertDateRange(patch.startDate || task.startDate, patch.endDate || task.endDate);
+  if (patch.priority !== undefined)
+    patch.priority = enumValue(patch.priority, 'priority', ['low', 'normal', 'high'], { required: true });
+  if (patch.syncCalendar !== undefined) patch.syncCalendar = Boolean(patch.syncCalendar);
   if (patch.assigneeId && !isPmWorker(db.users.byId(patch.assigneeId)))
     return res.status(400).json({ error: 'assignee must be an active PM production worker' });
+  if (patch.pmId) {
+    const nextPm = db.users.byId(patch.pmId);
+    if (!nextPm || nextPm.disabled || !['pm', 'admin'].includes(nextPm.role))
+      throw badRequest('INVALID_PM', 'pmId must identify an active PM or admin');
+  }
   db.tasks.update(task.id, patch);
   let updated = recomputeHours(db.tasks.byId(task.id));
 
@@ -293,13 +401,14 @@ router.patch('/:id', async (req, res) => {
     db.tasks.update(updated.id, { calendarEventId: null });
   }
 
-  res.json({ task: decorate(db.tasks.byId(updated.id)), conflict, risk, calendarWarning });
+  res.json({ task: decorate(db.tasks.byId(updated.id), req.user), conflict, risk, calendarWarning });
 });
 
 // ── Delete task ──────────────────────────────────────────────────────────────
 router.delete('/:id', async (req, res) => {
   const task = db.tasks.byId(req.params.id);
   if (!task) return res.status(404).json({ error: 'not found' });
+  requireTaskManager(req, task);
   if (task.calendarEventId) { try { await deleteTaskEvent(req.user, task.calendarEventId); } catch {} }
   db.drafts.removeWhere((dr) => dr.taskId === task.id);
   db.attachments.removeWhere((a) => a.taskId === task.id);
@@ -387,23 +496,31 @@ router.delete('/:id/updates/:updateId', (req, res) => {
 router.post('/:id/drafts', (req, res) => {
   const task = db.tasks.byId(req.params.id);
   if (!task) return res.status(404).json({ error: 'not found' });
+  requireTaskManager(req, task);
+  assertPlainObject(req.body);
   const existing = db.drafts.find((dr) => dr.taskId === task.id);
   const { step, estDays, estHours, dueDate } = req.body || {};
+  const validStep = cleanString(step, 'step', { max: 100 });
+  const validDays = finiteNumber(estDays, 'estDays', { min: 0, max: 365 }) || 0;
+  const validHours = finiteNumber(estHours, 'estHours', { min: 0, max: 1000 }) || 0;
+  const validDueDate = dateString(dueDate, 'dueDate', { nullable: true });
+  if (validDueDate && (validDueDate < task.startDate || validDueDate > task.endDate))
+    throw badRequest('INVALID_DRAFT_DATE', 'dueDate must fall within the task date range');
   const draft = {
     id: `dft_${nanoid(6)}`,
     taskId: task.id,
-    step: step || `Draft ${existing.length + 1}`,
+    step: validStep || `Draft ${existing.length + 1}`,
     order: existing.length,
-    estDays: Number(estDays) || 0,
-    estHours: Number(estHours) || 0,
+    estDays: validDays,
+    estHours: validHours,
     loggedHours: 0,
     status: 'Pending',
-    dueDate: dueDate || null,
+    dueDate: validDueDate || null,
     fileName: null, fileType: null, fileUrl: null,
   };
   db.drafts.insert(draft);
   recomputeHours(task);
-  res.status(201).json({ task: decorate(db.tasks.byId(task.id)) });
+  res.status(201).json({ task: decorate(db.tasks.byId(task.id), req.user) });
 });
 
 // ── Update a draft (hours, status, file, dueDate) ────────────────────────────
@@ -412,18 +529,41 @@ router.patch('/:id/drafts/:draftId', (req, res) => {
   const draft = db.drafts.byId(req.params.draftId);
   if (!task || !draft || draft.taskId !== task.id)
     return res.status(404).json({ error: 'not found' });
+  assertPlainObject(req.body);
   const { step, estDays, estHours, loggedHours, status, dueDate, fileName, fileType, fileUrl } = req.body || {};
   const patch = {};
-  if (step !== undefined) patch.step = step;
-  if (estDays !== undefined) patch.estDays = Number(estDays) || 0;
-  if (estHours !== undefined) patch.estHours = Number(estHours) || 0;
-  if (loggedHours !== undefined) patch.loggedHours = Number(loggedHours) || 0;
-  if (status !== undefined) patch.status = status;
-  if (dueDate !== undefined) patch.dueDate = dueDate;
-  if (fileName !== undefined) { patch.fileName = fileName; patch.fileType = fileType || null; patch.fileUrl = fileUrl || null; }
+  const managerOnlyFields = [step, estDays, estHours, loggedHours, dueDate];
+  if (managerOnlyFields.some((value) => value !== undefined)) requireTaskManager(req, task);
+  else requireTaskContributor(req, task);
+  if (loggedHours !== undefined)
+    throw badRequest('USE_TIME_LOG', 'loggedHours can only be changed through the log-hours endpoint');
+  if (step !== undefined) patch.step = cleanString(step, 'step', { required: true, max: 100 });
+  if (estDays !== undefined) patch.estDays = finiteNumber(estDays, 'estDays', { min: 0, max: 365 });
+  if (estHours !== undefined) patch.estHours = finiteNumber(estHours, 'estHours', { min: 0, max: 1000 });
+  if (status !== undefined) {
+    enumValue(status, 'status', DRAFT_STATUSES, { required: true });
+    if (!canTransitionDraft(req.user, task, draft, status, taskProject(task))) {
+      throw badRequest(
+        'INVALID_DRAFT_TRANSITION',
+        `Cannot move draft from ${draft.status} to ${status}`,
+        { allowed: allowedDraftTransitions(req.user, task, draft, taskProject(task)) }
+      );
+    }
+    patch.status = status;
+  }
+  if (dueDate !== undefined) {
+    patch.dueDate = dateString(dueDate, 'dueDate', { nullable: true });
+    if (patch.dueDate && (patch.dueDate < task.startDate || patch.dueDate > task.endDate))
+      throw badRequest('INVALID_DRAFT_DATE', 'dueDate must fall within the task date range');
+  }
+  if (fileName !== undefined) {
+    patch.fileName = cleanString(fileName, 'fileName', { max: 160 }) || null;
+    patch.fileType = cleanString(fileType, 'fileType', { max: 100 }) || null;
+    patch.fileUrl = cleanString(fileUrl, 'fileUrl', { max: 5 * 1024 * 1024 }) || null;
+  }
   db.drafts.update(draft.id, patch);
   recomputeHours(task);
-  res.json({ task: decorate(db.tasks.byId(task.id)) });
+  res.json({ task: decorate(db.tasks.byId(task.id), req.user) });
 });
 
 // ── Delete a draft step and its associated hour logs ────────────────────────
@@ -432,6 +572,7 @@ router.delete('/:id/drafts/:draftId', (req, res) => {
   const draft = db.drafts.byId(req.params.draftId);
   if (!task || !draft || draft.taskId !== task.id)
     return res.status(404).json({ error: 'not found' });
+  requireTaskManager(req, task);
 
   db.timeLogs.removeWhere((entry) => entry.taskId === task.id && entry.draftId === draft.id);
   db.taskUpdates.removeWhere((entry) => entry.taskId === task.id && entry.draftId === draft.id);
@@ -441,16 +582,25 @@ router.delete('/:id/drafts/:draftId', (req, res) => {
     .sort((a, b) => (a.order || 0) - (b.order || 0))
     .forEach((entry, order) => db.drafts.update(entry.id, { order }));
   recomputeHours(task);
-  res.json({ task: decorate(db.tasks.byId(task.id)) });
+  res.json({ task: decorate(db.tasks.byId(task.id), req.user) });
 });
 
 // ── Log work hours against a task/draft (adds to loggedHours) ────────────────
 router.post('/:id/log-hours', (req, res) => {
   const task = db.tasks.byId(req.params.id);
   if (!task) return res.status(404).json({ error: 'not found' });
+  requireTaskContributor(req, task);
+  assertPlainObject(req.body);
   const { draftId, hours, date, note } = req.body || {};
-  const h = Number(hours);
-  if (!h || h <= 0) return res.status(400).json({ error: 'hours must be > 0' });
+  const h = finiteNumber(hours, 'hours', { required: true, min: 0.01, max: 24 });
+  const validDate = dateString(date, 'date') || new Date().toISOString().slice(0, 10);
+  const validNote = cleanString(note, 'note', { max: 1000 }) || '';
+  let draft = null;
+  if (draftId) {
+    draft = db.drafts.byId(draftId);
+    if (!draft || draft.taskId !== task.id)
+      throw badRequest('INVALID_DRAFT', 'draftId must identify a draft in this task');
+  }
 
   const entry = {
     id: `log_${nanoid(8)}`,
@@ -458,16 +608,14 @@ router.post('/:id/log-hours', (req, res) => {
     draftId: draftId || null,
     userId: req.user.id,
     hours: h,
-    date: date || new Date().toISOString().slice(0, 10),
-    note: note || '',
+    date: validDate,
+    note: validNote,
     createdAt: new Date().toISOString(),
   };
   db.timeLogs.insert(entry);
 
   if (draftId) {
-    const draft = db.drafts.byId(draftId);
-    if (draft && draft.taskId === task.id)
-      db.drafts.update(draftId, { loggedHours: (Number(draft.loggedHours) || 0) + h });
+    db.drafts.update(draftId, { loggedHours: (Number(draft.loggedHours) || 0) + h });
   }
   recomputeHours(task);
 
@@ -484,31 +632,45 @@ router.post('/:id/log-hours', (req, res) => {
       meta: { taskId: updated.id },
     });
   }
-  res.json({ task: decorate(updated), risk, entry });
+  res.json({ task: decorate(updated, req.user), risk, entry });
 });
 
 // ── Add an attachment (metadata; brief/reference link or uploaded file name) ─
 router.post('/:id/attachments', (req, res) => {
   const task = db.tasks.byId(req.params.id);
   if (!task) return res.status(404).json({ error: 'not found' });
+  requireTaskContributor(req, task);
+  assertPlainObject(req.body);
   const { name, type, url } = req.body || {};
-  if (!name) return res.status(400).json({ error: 'name required' });
+  const validName = cleanString(name, 'name', { required: true, max: 160 });
+  const validType = enumValue(type, 'type', ['pdf', 'image', 'video', 'link', 'file']) || 'link';
+  const validUrl = cleanString(url, 'url', { max: 5 * 1024 * 1024 }) || null;
   const att = {
     id: `att_${nanoid(6)}`,
     taskId: task.id,
-    name,
-    type: type || 'link', // pdf | image | video | link
-    url: url || null,
+    name: validName,
+    type: validType,
+    url: validUrl,
     uploadedBy: req.user.id,
     createdAt: new Date().toISOString(),
   };
   db.attachments.insert(att);
-  res.status(201).json({ task: decorate(db.tasks.byId(task.id)) });
+  res.status(201).json({ task: decorate(db.tasks.byId(task.id), req.user) });
 });
 
 router.delete('/:id/attachments/:attId', (req, res) => {
-  db.attachments.remove(req.params.attId);
-  res.json({ task: decorate(db.tasks.byId(req.params.id)) });
+  const task = db.tasks.byId(req.params.id);
+  const attachment = db.attachments.byId(req.params.attId);
+  if (!task || !attachment || attachment.taskId !== task.id)
+    return res.status(404).json({ error: 'not found' });
+  if (
+    attachment.uploadedBy !== req.user.id &&
+    !canEditTaskDetails(req.user, task, taskProject(task))
+  ) {
+    throw forbidden();
+  }
+  db.attachments.remove(attachment.id);
+  res.json({ task: decorate(task, req.user) });
 });
 
 export default router;

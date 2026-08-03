@@ -5,15 +5,16 @@ import { Server } from 'socket.io';
 import { verifyToken } from './auth/jwt.js';
 import db from './db.js';
 import { config } from './config.js';
-import { dmChannelKey } from './services/chat.js';
+import { canAccessDmChannel, dmChannelKey } from './services/chat.js';
 import { encryptText, decryptText } from './services/crypto.js';
+import { validateChatAttachment } from './services/chatAttachments.js';
 
 let io = null;
 
 export function initRealtime(httpServer) {
   io = new Server(httpServer, {
     cors: { origin: config.clientOrigin, credentials: true },
-    maxHttpBufferSize: 5 * 1024 * 1024,
+    maxHttpBufferSize: Math.ceil(config.chatAttachmentMaxBytes * 1.5) + 1024,
   });
 
   io.use((socket, next) => {
@@ -21,7 +22,7 @@ export function initRealtime(httpServer) {
     const payload = token && verifyToken(token);
     if (!payload) return next(new Error('unauthorized'));
     const user = db.users.byId(payload.sub);
-    if (!user) return next(new Error('unauthorized'));
+    if (!user || user.disabled) return next(new Error('unauthorized'));
     socket.userId = user.id;
     next();
   });
@@ -34,13 +35,27 @@ export function initRealtime(httpServer) {
     // Real-time chat send (also persisted)
     socket.on('chat:send', ({ channelType, channelKey, body, taskId, attachment } = {}, ack) => {
       if (!body || !body.trim()) return ack?.({ error: 'empty' });
+      const resolvedChannelType = channelType || 'dm';
+      if (resolvedChannelType === 'dm' && !canAccessDmChannel(socket.userId, channelKey))
+        return ack?.({ error: 'not allowed' });
+      if (resolvedChannelType === 'group') {
+        const group = db.groups.byId(String(channelKey || '').replace('group:', ''));
+        if (!group?.memberIds.includes(socket.userId)) return ack?.({ error: 'not allowed' });
+      }
+      if (!['dm', 'group'].includes(resolvedChannelType)) return ack?.({ error: 'invalid channel' });
+      let safeAttachment = null;
+      try {
+        safeAttachment = validateChatAttachment(attachment, config.chatAttachmentMaxBytes);
+      } catch (error) {
+        return ack?.({ error: error.message });
+      }
       const msg = saveMessage({
         senderId: socket.userId,
-        channelType: channelType || 'dm',
+        channelType: resolvedChannelType,
         channelKey,
         body: body.trim(),
         taskId: taskId || null,
-        attachment: attachment || null,
+        attachment: safeAttachment,
       });
       emitMessage(msg);
       ack?.({ ok: true, message: msg });
@@ -55,7 +70,11 @@ export function initRealtime(httpServer) {
     });
 
     socket.on('chat:typing', ({ channelKey, to } = {}) => {
-      if (to) io.to(`user:${to}`).emit('chat:typing', { channelKey, from: socket.userId });
+      if (to && canAccessDmChannel(socket.userId, channelKey)) {
+        const members = String(channelKey).split('::');
+        if (members.includes(to))
+          io.to(`user:${to}`).emit('chat:typing', { channelKey, from: socket.userId });
+      }
     });
 
     socket.on('disconnect', () => {
@@ -69,7 +88,16 @@ export function initRealtime(httpServer) {
 
 // Body is encrypted before it touches disk (see services/crypto.js) — the
 // returned/emitted object carries the plaintext for immediate delivery.
-export function saveMessage({ senderId, channelType, channelKey, body, taskId, attachment }) {
+export function saveMessage({
+  senderId,
+  channelType,
+  channelKey,
+  body,
+  taskId,
+  attachment,
+  system = false,
+  markSenderRead = true,
+}) {
   const record = {
     id: `msg_${Date.now()}_${Math.floor(Math.random() * 1e4)}`,
     senderId,
@@ -77,9 +105,10 @@ export function saveMessage({ senderId, channelType, channelKey, body, taskId, a
     channelKey,
     taskId: taskId || null,
     attachment: attachment || null,
+    system: Boolean(system),
     bodyEnc: encryptText(body),
     createdAt: new Date().toISOString(),
-    readBy: [senderId],
+    readBy: markSenderRead ? [senderId] : [],
   };
   db.messages.insert(record);
   const { bodyEnc, ...rest } = record;
@@ -120,7 +149,7 @@ const UNSEND_WINDOW_MS = 24 * 60 * 60 * 1000;
 // Returns the removed record (for targeted socket emit) or null if not allowed.
 export function deleteMessage(id, requesterId) {
   const msg = db.messages.byId(id);
-  if (!msg || msg.senderId !== requesterId) return null;
+  if (!msg || msg.system || msg.senderId !== requesterId) return null;
   if (Date.now() - new Date(msg.createdAt).getTime() > UNSEND_WINDOW_MS) return null;
   db.messages.remove(id);
   return msg;

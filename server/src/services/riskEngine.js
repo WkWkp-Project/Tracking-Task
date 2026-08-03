@@ -26,6 +26,17 @@
 import { WORK } from '../config.js';
 
 const MS_DAY = 24 * 60 * 60 * 1000;
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+export function workweekMetric() {
+  const days = [...WORK.workdays];
+  const mondayToFriday = days.length === 5 && days.every((day, index) => day === index + 1);
+  return {
+    days,
+    label: mondayToFriday ? 'Monday–Friday' : days.map((day) => DAY_NAMES[day]).join(', '),
+    excludesWeekends: !days.includes(0) && !days.includes(6),
+  };
+}
 
 function d(dateStr) {
   return new Date(`${dateStr}T12:00:00Z`);
@@ -83,7 +94,7 @@ export function remainingHours(task) {
 
 // Only tasks that still consume future capacity
 function isActive(task) {
-  return task.status !== 'Done' && task.status !== 'Cancelled';
+  return !['Done', 'Cancelled', 'Archive'].includes(task.status);
 }
 
 // ── PERT estimate for a task ────────────────────────────────────────────────
@@ -209,13 +220,14 @@ export function assessRisk(task, user, otherTasks = [], drafts = [], now = new D
   const delivered =
     task.status === 'Done' || task.status === 'Approval' ||
     (hasDrafts && activeDrafts.length === 0);
-  if (delivered || task.status === 'Cancelled') {
+  if (delivered || task.status === 'Cancelled' || task.status === 'Archive') {
     return {
       taskId: task.id,
-      level: task.status === 'Cancelled' ? 'Low' : 'Done',
+      level: ['Cancelled', 'Archive'].includes(task.status) ? 'Low' : 'Done',
       onTimeProbability: 1, overrunProbability: 0, severity: 0, riskExposure: 0,
       calendarDaysLeft, workdaysLeft: 0,
       expectedRemainingHours: 0, availableHoursForTask: 0, capacityPerDay: cap,
+      workweek: workweekMetric(),
       phases: (drafts || []).map((x) => ({
         draftId: x.id, step: x.step, level: x.status === 'Approved' ? 'Done' : 'Low',
         daysLeft: null, remainingHours: 0, dueDate: x.dueDate || task.endDate,
@@ -328,6 +340,7 @@ export function assessRisk(task, user, otherTasks = [], drafts = [], now = new D
     expectedRemainingHours: round(taskRemaining),
     availableHoursForTask: round(availTask),
     capacityPerDay: cap,
+    workweek: workweekMetric(),
     phases,
     recommendations,
   };

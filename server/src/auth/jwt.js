@@ -34,9 +34,10 @@ export function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   const payload = token && verifyToken(token);
-  if (!payload) return res.status(401).json({ error: 'Unauthorized' });
+  if (!payload) return res.status(401).json({ error: 'Unauthorized', code: 'UNAUTHORIZED' });
   const user = db.users.byId(payload.sub);
-  if (!user) return res.status(401).json({ error: 'User no longer exists' });
+  if (!user || user.disabled)
+    return res.status(401).json({ error: 'Account is unavailable', code: 'ACCOUNT_UNAVAILABLE' });
   req.user = user;
   next();
 }
@@ -44,6 +45,6 @@ export function requireAuth(req, res, next) {
 // Express middleware: require admin role
 export function requireAdmin(req, res, next) {
   if (req.user?.role !== 'admin')
-    return res.status(403).json({ error: 'Admin only' });
+    return res.status(403).json({ error: 'Admin only', code: 'FORBIDDEN' });
   next();
 }

@@ -12,11 +12,17 @@ const DUE_BAR = { danger: 'bg-red-500', warn: 'bg-amber-400', ok: 'bg-emerald-40
 export default function AEDashboard({ users, projects, brands, onOpenBrand, onManageBrands, onOpenAeBoard }) {
   const [aeRows, setAeRows] = useState(null);
   const [loadedAt, setLoadedAt] = useState(null);
+  const [error, setError] = useState('');
 
   const load = async () => {
-    const { tasks: ae } = await api.aeTasks();
-    setAeRows(ae);
-    setLoadedAt(new Date());
+    setError('');
+    try {
+      const { tasks: ae } = await api.aeTasks();
+      setAeRows(ae);
+      setLoadedAt(new Date());
+    } catch (err) {
+      setError(err.message || 'Unable to load AE dashboard');
+    }
   };
   useEffect(() => { load(); }, []);
 
@@ -50,6 +56,13 @@ export default function AEDashboard({ users, projects, brands, onOpenBrand, onMa
 
     return { notDone, urgent, overdue, byPerson, topUrgent };
   }, [aeRows, aePeople]);
+
+  if (!stats && error) return (
+    <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-6 text-center">
+      <p className="text-sm font-bold text-red-700">{error}</p>
+      <button onClick={load} className="mt-3 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-bold text-red-700">Retry</button>
+    </div>
+  );
 
   if (!stats) return <Spinner label="กำลังสรุปข้อมูล AE…" />;
 

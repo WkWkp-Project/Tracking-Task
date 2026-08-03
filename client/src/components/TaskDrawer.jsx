@@ -8,8 +8,6 @@ import api from '../api/client.js';
 import { Avatar, RiskBadge } from './ui.jsx';
 import { riskStyle, daysLeftText, fmtDate } from '../utils.js';
 
-const STATUSES = ['To Do', 'Draft 1', 'Draft 2', 'Final', 'Client Review', 'Approval', 'Done', 'Cancelled'];
-const DRAFT_STATUSES = ['Pending', 'In Progress', 'Revising', 'Approved'];
 const MAX_FILE_BYTES = 3 * 1024 * 1024;
 
 function uploadType(file) {
@@ -34,14 +32,31 @@ export default function TaskDrawer({ taskId, users, project, projects, googleSta
   const [task, setTask] = useState(null);
   const [tab, setTab] = useState('pipeline');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
   const load = async () => {
-    const { task } = await api.task(taskId);
-    setTask(task);
+    setError('');
+    try {
+      const { task } = await api.task(taskId);
+      setTask(task);
+    } catch (err) {
+      setError(err.message || 'Unable to load task');
+    }
   };
-  useEffect(() => { if (taskId) load(); /* eslint-disable-next-line */ }, [taskId]);
+  useEffect(() => {
+    setTask(null);
+    if (taskId) load();
+    /* eslint-disable-next-line */
+  }, [taskId]);
 
   if (!taskId) return null;
+  if (!task && error) return (
+    <div className="w-[560px] bg-white dark:bg-zinc-950 border-l border-gray-200 dark:border-zinc-800 shadow-2xl flex flex-col items-center justify-center gap-3 p-8">
+      <AlertCircle size={22} className="text-red-500" />
+      <p role="alert" className="text-center text-sm text-red-600">{error}</p>
+      <button onClick={load} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold">Retry</button>
+    </div>
+  );
   if (!task) return (
     <div className="w-[560px] bg-white dark:bg-zinc-950 border-l border-gray-200 dark:border-zinc-800 shadow-2xl flex items-center justify-center text-gray-400">กำลังโหลด…</div>
   );
@@ -53,10 +68,19 @@ export default function TaskDrawer({ taskId, users, project, projects, googleSta
   const rs = riskStyle(risk?.level);
   const pmOptions = users.filter((u) => u.role === 'pm' || u.role === 'admin');
   const workerOptions = users.filter((u) => !['pm', 'admin', 'ae'].includes(u.role) && !u.disabled);
+  const canManage = Boolean(task.workflow?.canManage);
+  const statusOptions = [task.status, ...(task.workflow?.allowedTransitions || [])];
 
   const patchTask = async (patch) => {
     setBusy(true);
-    try { const { task: t } = await api.updateTask(task.id, patch); setTask(t); onChanged?.(); }
+    setError('');
+    try {
+      const { task: t } = await api.updateTask(task.id, patch);
+      setTask(t);
+      onChanged?.();
+    } catch (err) {
+      setError(err.message || 'Unable to update task');
+    }
     finally { setBusy(false); }
   };
 
@@ -81,11 +105,13 @@ export default function TaskDrawer({ taskId, users, project, projects, googleSta
           {/* status */}
           <div className="mt-3">
             <label className="text-[10px] font-bold text-gray-500 uppercase">สถานะ</label>
-            <select value={task.status} onChange={(e) => patchTask({ status: e.target.value })} disabled={busy}
+            <select value={task.status} onChange={(e) => patchTask({ status: e.target.value })} disabled={busy || statusOptions.length <= 1}
               className="ml-2 text-sm text-gray-800 dark:text-zinc-100 bg-white dark:bg-zinc-900 border border-gray-300 dark:border-zinc-700 rounded-lg px-2 py-1 font-bold">
-              {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+              {statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
+            <span className="ml-2 text-[10px] text-gray-400">Valid next steps only</span>
           </div>
+          {error && <p role="alert" className="mt-2 text-xs text-red-600">{error}</p>}
 
           {/* ownership (editable — reassign worker / PM) */}
           <div className="grid grid-cols-2 gap-3 mt-4">
@@ -109,9 +135,9 @@ export default function TaskDrawer({ taskId, users, project, projects, googleSta
             </div>
             <div className="flex items-center gap-2 mt-3 text-[11px]">
               <span className="text-gray-500">เริ่ม</span>
-              <input type="date" value={task.startDate} disabled={busy} onChange={(e) => patchTask({ startDate: e.target.value })} className="text-gray-800 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded px-1.5 py-1" />
+              <input type="date" value={task.startDate} disabled={busy || !canManage} onChange={(e) => patchTask({ startDate: e.target.value })} className="text-gray-800 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded px-1.5 py-1" />
               <span className="text-gray-500">ส่ง</span>
-              <input type="date" value={task.endDate} disabled={busy} onChange={(e) => patchTask({ endDate: e.target.value })} className="text-gray-800 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded px-1.5 py-1" />
+              <input type="date" value={task.endDate} disabled={busy || !canManage} onChange={(e) => patchTask({ endDate: e.target.value })} className="text-gray-800 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded px-1.5 py-1" />
             </div>
             <p className="text-[10px] text-gray-400 mt-1">เลื่อนวันส่ง (deadline ปลายทาง) เพื่อล้างสถานะวิกฤตได้</p>
           </div>
@@ -126,7 +152,12 @@ export default function TaskDrawer({ taskId, users, project, projects, googleSta
               <Stat label="ค่าความเสี่ยง (exposure)" value={risk.riskExposure} />
               <Stat label="capacity ว่าง" value={`${risk.availableHoursForTask} ชม.`} />
               <Stat label="งานค้างรวม" value={`${risk.expectedRemainingHours} ชม.`} />
+              <Stat label="วันทำงานคงเหลือ" value={`${risk.workdaysLeft} วัน`} />
+              <Stat label="capacity ต่อวัน" value={`${risk.capacityPerDay} ชม.`} />
             </div>
+            <p className="mt-2 text-[10px] text-gray-400">
+              เมตริกวันทำงาน: {risk.workweek?.label || 'Monday–Friday'} · เสาร์–อาทิตย์ไม่ใช้ capacity และไม่นับในวันทำงาน
+            </p>
 
             {/* per-phase risk (deadline-first) */}
             {risk.phases?.length > 0 && (
@@ -169,7 +200,7 @@ export default function TaskDrawer({ taskId, users, project, projects, googleSta
         </div>
 
         <div className="p-5">
-          {tab === 'pipeline' && <Pipeline task={task} phases={risk?.phases || []} onReload={() => { load(); onChanged?.(); }} />}
+          {tab === 'pipeline' && <Pipeline task={task} phases={risk?.phases || []} canManage={canManage} onReload={() => { load(); onChanged?.(); }} />}
           {tab === 'briefs' && <Briefs task={task} onReload={load} />}
           {tab === 'client' && <ClientEmail task={task} project={taskProject} pm={pm} assignee={assignee} googleStatus={googleStatus} />}
         </div>
@@ -217,7 +248,7 @@ function Stat({ label, value }) {
   );
 }
 
-function Pipeline({ task, phases, onReload }) {
+function Pipeline({ task, phases, canManage, onReload }) {
   const [logging, setLogging] = useState(null); // draftId
   const [hours, setHours] = useState('');
   const [editing, setEditing] = useState(null); // draftId
@@ -300,7 +331,7 @@ function Pipeline({ task, phases, onReload }) {
           <p className="text-xs font-bold text-gray-800 dark:text-zinc-100">ขั้นตอนการทำงาน</p>
           <p className="text-[10px] text-gray-400">{task.drafts.length} ขั้นตอน · เพิ่ม แก้ไข หรือลบได้</p>
         </div>
-        <button onClick={() => setAdding((value) => !value)} className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1">
+        <button onClick={() => setAdding((value) => !value)} disabled={!canManage} title={canManage ? '' : 'Only the task PM can change workflow phases'} className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1 disabled:opacity-40">
           {adding ? <X size={13} /> : <Plus size={13} />} {adding ? 'ยกเลิก' : 'เพิ่มขั้นตอน'}
         </button>
       </div>
@@ -336,6 +367,7 @@ function Pipeline({ task, phases, onReload }) {
         const dayLabel = d.estDays > 0 ? `${d.estDays} วัน${d.estHours ? ` + ${d.estHours} ชม.` : ''}` : `${d.estHours} ชม.`;
         const ph = phaseFor(d.id);
         const pst = ph ? riskStyle(ph.level) : null;
+        const draftStatusOptions = [d.status, ...(d.workflow?.allowedTransitions || [])];
         return (
           <div key={d.id} className="relative flex gap-3 pl-0">
             <div className={`w-4 h-4 rounded-full border-2 bg-white dark:bg-zinc-950 mt-1 z-10 flex items-center justify-center ${done ? 'border-emerald-500 text-emerald-500' : ph && ph.level === 'Critical' ? 'border-red-500' : 'border-gray-300 dark:border-zinc-600'}`}>
@@ -360,7 +392,7 @@ function Pipeline({ task, phases, onReload }) {
 
               <div className="flex items-center gap-2 mb-2">
                 <select value={d.status} onChange={(e) => setStatus(d.id, e.target.value)} className="text-[11px] text-gray-800 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded px-1.5 py-0.5 disabled:opacity-100">
-                  {DRAFT_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                  {draftStatusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
                 {d.fileName && d.fileUrl ? (
                   <a href={d.fileUrl} target="_blank" rel="noreferrer" download={d.fileName}

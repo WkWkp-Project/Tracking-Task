@@ -49,7 +49,7 @@ router.get('/', (req, res) => {
     // pairwise overlaps among this person's tasks (the "งานชน" list)
     const conflict = detectConflicts(user, myTasks, null);
     const overlaps = [];
-    const active = myTasks.filter((t) => t.status !== 'Done' && t.status !== 'Cancelled');
+    const active = myTasks.filter((t) => !['Done', 'Cancelled', 'Archive'].includes(t.status));
     for (let i = 0; i < active.length; i++) {
       for (let j = i + 1; j < active.length; j++) {
         const a = active[i], b = active[j];

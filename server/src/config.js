@@ -17,6 +17,11 @@ export const config = {
   // chat messages are encrypted at rest with this key — set CHAT_ENCRYPTION_KEY
   // in production so a copy of db.json alone can't be read (even by an admin)
   chatEncryptionKey: process.env.CHAT_ENCRYPTION_KEY || 'dev-insecure-chat-key-change-me',
+  reminderTimeZone: process.env.REMINDER_TIME_ZONE || 'Asia/Bangkok',
+  chatAttachmentMaxBytes: Math.max(
+    1024,
+    Number(process.env.CHAT_ATTACHMENT_MAX_BYTES) || 5 * 1024 * 1024
+  ),
   admin: {
     email: process.env.ADMIN_EMAIL || 'admin@wkwkp.com',
     password: process.env.ADMIN_PASSWORD || 'admin1234',
@@ -34,6 +39,20 @@ export const config = {
 export const googleConfigured = Boolean(
   config.google.clientId && config.google.clientSecret
 );
+
+export function validateRuntimeConfig() {
+  if (process.env.NODE_ENV !== 'production') return;
+  const unsafe = [];
+  if (config.jwtSecret === 'dev-insecure-secret-change-me') unsafe.push('JWT_SECRET');
+  if (config.chatEncryptionKey === 'dev-insecure-chat-key-change-me')
+    unsafe.push('CHAT_ENCRYPTION_KEY');
+  if (config.admin.password === 'admin1234') unsafe.push('ADMIN_PASSWORD');
+  if (unsafe.length) {
+    throw new Error(
+      `Refusing to start in production with insecure defaults: ${unsafe.join(', ')}`
+    );
+  }
+}
 
 // Capacity defaults used by the risk engine
 export const WORK = {

@@ -49,11 +49,17 @@ const signalTone = {
 export default function PMDashboard({ users, projects, onOpenTask, onOpenProject, onManageBrands, onNewProject }) {
   const [tasks, setTasks] = useState(null);
   const [loadedAt, setLoadedAt] = useState(null);
+  const [error, setError] = useState('');
 
   const load = useCallback(async () => {
-    const { tasks: rows } = await api.tasks();
-    setTasks(rows);
-    setLoadedAt(new Date());
+    setError('');
+    try {
+      const { tasks: rows } = await api.tasks();
+      setTasks(rows);
+      setLoadedAt(new Date());
+    } catch (err) {
+      setError(err.message || 'Unable to load PM dashboard');
+    }
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -94,6 +100,13 @@ export default function PMDashboard({ users, projects, onOpenTask, onOpenProject
       dangerCount, dueSoonCount, overloadedCount, activeProjectCount,
     };
   }, [tasks, users, projects]);
+
+  if (!model && error) return (
+    <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-6 text-center">
+      <p className="text-sm font-bold text-red-700">{error}</p>
+      <button onClick={load} className="mt-3 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-bold text-red-700">Retry</button>
+    </div>
+  );
 
   if (!model) return <Spinner label="กำลังเตรียม Dashboard…" />;
 
