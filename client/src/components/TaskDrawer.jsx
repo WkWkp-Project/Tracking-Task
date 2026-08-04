@@ -33,6 +33,8 @@ export default function TaskDrawer({ taskId, users, project, projects, googleSta
   const [tab, setTab] = useState('pipeline');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [schedule, setSchedule] = useState({ startDate: '', endDate: '' });
+  const [scheduleMessage, setScheduleMessage] = useState('');
 
   const load = async () => {
     setError('');
@@ -48,6 +50,9 @@ export default function TaskDrawer({ taskId, users, project, projects, googleSta
     if (taskId) load();
     /* eslint-disable-next-line */
   }, [taskId]);
+  useEffect(() => {
+    if (task) setSchedule({ startDate: task.startDate || '', endDate: task.endDate || '' });
+  }, [task?.id, task?.startDate, task?.endDate]);
 
   if (!taskId) return null;
   if (!task && error) return (
@@ -82,6 +87,33 @@ export default function TaskDrawer({ taskId, users, project, projects, googleSta
       setError(err.message || 'Unable to update task');
     }
     finally { setBusy(false); }
+  };
+
+  const saveSchedule = async () => {
+    if (!schedule.startDate || !schedule.endDate) {
+      setError('กรุณาระบุวันเริ่มและวันส่งให้ครบ');
+      return;
+    }
+    if (schedule.startDate > schedule.endDate) {
+      setError('วันเริ่มต้องไม่อยู่หลังวันส่ง');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    setScheduleMessage('');
+    try {
+      const result = await api.updateTask(task.id, schedule);
+      setTask(result.task);
+      const adjusted = result.scheduleAdjustments?.length || 0;
+      setScheduleMessage(adjusted
+        ? `บันทึกแล้ว และปรับกำหนดส่งของ ${adjusted} ขั้นตอนให้อยู่ในช่วงงาน`
+        : 'บันทึกช่วงวันแล้ว — Timeline และ Workload อัปเดตเรียบร้อย');
+      onChanged?.();
+    } catch (err) {
+      setError(err.message || 'Unable to update schedule');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -133,13 +165,21 @@ export default function TaskDrawer({ taskId, users, project, projects, googleSta
               <div className={`h-full ${task.loggedHours > task.estimatedHours ? 'bg-red-500' : 'bg-violet-500'}`}
                 style={{ width: `${Math.min(100, (task.loggedHours / (task.estimatedHours || 1)) * 100)}%` }} />
             </div>
-            <div className="flex items-center gap-2 mt-3 text-[11px]">
-              <span className="text-gray-500">เริ่ม</span>
-              <input type="date" value={task.startDate} disabled={busy || !canManage} onChange={(e) => patchTask({ startDate: e.target.value })} className="text-gray-800 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded px-1.5 py-1" />
-              <span className="text-gray-500">ส่ง</span>
-              <input type="date" value={task.endDate} disabled={busy || !canManage} onChange={(e) => patchTask({ endDate: e.target.value })} className="text-gray-800 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded px-1.5 py-1" />
+            <div className="flex items-end gap-2 mt-3 text-[11px] flex-wrap">
+              <label className="text-gray-500">เริ่ม
+                <input type="date" value={schedule.startDate} max={schedule.endDate || undefined} disabled={busy || !canManage} onChange={(e) => { setSchedule((current) => ({ ...current, startDate: e.target.value })); setScheduleMessage(''); }} className="block mt-1 text-gray-800 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded px-1.5 py-1" />
+              </label>
+              <label className="text-gray-500">ส่ง
+                <input type="date" value={schedule.endDate} min={schedule.startDate || undefined} disabled={busy || !canManage} onChange={(e) => { setSchedule((current) => ({ ...current, endDate: e.target.value })); setScheduleMessage(''); }} className="block mt-1 text-gray-800 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded px-1.5 py-1" />
+              </label>
+              {canManage && (
+                <button type="button" onClick={saveSchedule} disabled={busy || (schedule.startDate === task.startDate && schedule.endDate === task.endDate)} className="px-2.5 py-1.5 rounded bg-blue-600 text-white font-bold disabled:opacity-40">
+                  บันทึกช่วงวัน
+                </button>
+              )}
             </div>
-            <p className="text-[10px] text-gray-400 mt-1">เลื่อนวันส่ง (deadline ปลายทาง) เพื่อล้างสถานะวิกฤตได้</p>
+            <p className="text-[10px] text-gray-400 mt-1">บันทึกวันเริ่มและวันส่งพร้อมกัน เพื่อคำนวณ Timeline, วันทำงาน และ Workload ใหม่อย่างสอดคล้องกัน</p>
+            {scheduleMessage && <p role="status" className="text-[10px] font-bold text-emerald-600 mt-1">{scheduleMessage}</p>}
           </div>
         </div>
 
@@ -256,6 +296,7 @@ function Pipeline({ task, phases, canManage, onReload }) {
   const [adding, setAdding] = useState(false);
   const [newDraft, setNewDraft] = useState({ step: '', estDays: 0, estHours: 0, dueDate: '' });
   const [draftUpdates, setDraftUpdates] = useState([]);
+  const [editError, setEditError] = useState('');
 
   const phaseFor = (draftId) => (phases || []).find((p) => p.draftId === draftId);
   useEffect(() => {
@@ -287,11 +328,16 @@ function Pipeline({ task, phases, canManage, onReload }) {
   };
   const startEdit = (d) => { setEditing(d.id); setEdit({ step: d.step || '', estDays: d.estDays || 0, estHours: d.estHours || 0, dueDate: d.dueDate || '' }); };
   const saveEdit = async (draftId) => {
-    await api.updateDraft(task.id, draftId, {
-      step: edit.step.trim() || 'Draft',
-      estDays: Number(edit.estDays) || 0, estHours: Number(edit.estHours) || 0, dueDate: edit.dueDate || null,
-    });
-    setEditing(null); onReload();
+    setEditError('');
+    try {
+      await api.updateDraft(task.id, draftId, {
+        step: edit.step.trim() || 'Draft',
+        estDays: Number(edit.estDays) || 0, estHours: Number(edit.estHours) || 0, dueDate: edit.dueDate || null,
+      });
+      setEditing(null); onReload();
+    } catch (error) {
+      setEditError(error.message || 'แก้ไขเวลาและกำหนดส่งไม่สำเร็จ');
+    }
   };
   const addDraft = async () => {
     if (!newDraft.step.trim()) return;
@@ -326,6 +372,7 @@ function Pipeline({ task, phases, canManage, onReload }) {
 
   return (
     <div className="space-y-3 relative">
+      {editError && <p role="alert" className="text-xs font-bold text-red-600">{editError}</p>}
       <div className="flex items-center justify-between gap-3 pb-1">
         <div>
           <p className="text-xs font-bold text-gray-800 dark:text-zinc-100">ขั้นตอนการทำงาน</p>
@@ -352,7 +399,7 @@ function Pipeline({ task, phases, canManage, onReload }) {
               <input type="number" min="0" value={newDraft.estHours} onChange={(e) => setNewDraft({ ...newDraft, estHours: e.target.value })} className="mt-1 w-full p-1.5 text-xs text-gray-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg" />
             </label>
             <label className="text-[10px] text-gray-500">กำหนดส่ง
-              <input type="date" value={newDraft.dueDate} onChange={(e) => setNewDraft({ ...newDraft, dueDate: e.target.value })} className="mt-1 w-full p-1.5 text-xs text-gray-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg" />
+              <input type="date" min={task.startDate} max={task.endDate} value={newDraft.dueDate} onChange={(e) => setNewDraft({ ...newDraft, dueDate: e.target.value })} className="mt-1 w-full p-1.5 text-xs text-gray-900 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg" />
             </label>
           </div>
           <button onClick={addDraft} disabled={!newDraft.step.trim()} className="w-full py-2 rounded-lg bg-blue-600 text-white text-xs font-bold disabled:opacity-40">บันทึกขั้นตอนใหม่</button>
@@ -429,7 +476,7 @@ function Pipeline({ task, phases, canManage, onReload }) {
                   </div>
                   <div className="flex items-center gap-1.5 text-[11px]">
                     <span className="text-gray-500 w-8">ส่ง</span>
-                    <input type="date" value={edit.dueDate} onChange={(e) => setEdit({ ...edit, dueDate: e.target.value })} className="p-1 text-gray-800 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded" />
+                    <input type="date" min={task.startDate} max={task.endDate} value={edit.dueDate} onChange={(e) => setEdit({ ...edit, dueDate: e.target.value })} className="p-1 text-gray-800 dark:text-zinc-100 bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded" />
                   </div>
                   <div className="flex gap-1.5">
                     <button onClick={() => saveEdit(d.id)} className="text-xs px-2 py-0.5 bg-blue-600 text-white rounded font-bold">บันทึก</button>

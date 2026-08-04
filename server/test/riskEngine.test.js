@@ -49,6 +49,28 @@ test('weekend-only tasks consume no workload capacity', () => {
   assert.deepEqual(buildWorkload(user, [weekendTask]), {});
 });
 
+test('editing the task date range redistributes remaining effort across the new workdays', () => {
+  const original = buildWorkload(user, [task({ estimatedHours: 40 })]);
+  assert.equal(original['2026-07-27'].load, 8);
+  assert.equal(original['2026-07-31'].load, 8);
+
+  const moved = buildWorkload(user, [task({
+    startDate: '2026-07-29',
+    endDate: '2026-08-03',
+    estimatedHours: 40,
+  })]);
+  assert.deepEqual(Object.keys(moved), [
+    '2026-07-29',
+    '2026-07-30',
+    '2026-07-31',
+    '2026-08-03',
+  ]);
+  assert.equal(moved['2026-07-29'].load, 10);
+  assert.equal(moved['2026-08-03'].load, 10);
+  assert.equal(moved['2026-08-01'], undefined);
+  assert.equal(moved['2026-08-02'], undefined);
+});
+
 test('remaining hours never becomes negative', () => {
   assert.equal(remainingHours(task({ estimatedHours: 8, loggedHours: 12 })), 0);
 });

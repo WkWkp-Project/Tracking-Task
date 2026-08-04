@@ -309,7 +309,7 @@ export default function Dashboard() {
                 refreshKey={boardVersion}
               />
             ) : view === 'calendar' ? (
-              <CalendarView projects={projects} onOpenTask={(id) => handleNavigate({ type: 'task', id })} />
+              <CalendarView projects={projects} onOpenTask={(id) => handleNavigate({ type: 'task', id })} refreshKey={boardVersion} />
             ) : view === 'calendar-ae' ? (
               <AECalendarView users={users} onOpenAeBoard={() => setView('ae')} />
             ) : view === 'ae' ? (
@@ -338,7 +338,7 @@ export default function Dashboard() {
               onClose={() => { setDrawerTaskId(null); setDrawerProjectId(null); }}
               onChanged={() => {
                 if (selected?.id) loadTasks(selected.id);
-                if (view === 'board') setBoardVersion((value) => value + 1);
+                setBoardVersion((value) => value + 1);
               }}
               onOpenChat={(uid) => setChat({ open: true, presetUserId: uid })}
             />
@@ -364,7 +364,7 @@ export default function Dashboard() {
           project={newTaskProject} users={users} currentUser={user}
           onCreated={(_t, calWarn) => {
             if (selected?.id === newTaskProject.id) loadTasks(newTaskProject.id);
-            if (view === 'board') setBoardVersion((value) => value + 1);
+            setBoardVersion((value) => value + 1);
             if (calWarn) alert('สร้างงานแล้ว แต่ sync calendar ไม่สำเร็จ: ' + calWarn);
           }}
         />

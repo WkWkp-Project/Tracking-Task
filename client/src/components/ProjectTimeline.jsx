@@ -1,8 +1,7 @@
 import React, { useMemo } from 'react';
 import { ArrowUpRight, CalendarDays, Plus } from 'lucide-react';
 import { Avatar } from './ui.jsx';
-
-const DAY = 86400000;
+import { DAY_MS, timelineBounds, timelinePosition } from '../dateSchedule.js';
 
 function progress(task) {
   if (task.status === 'Done') return 100;
@@ -15,24 +14,17 @@ function progress(task) {
 }
 
 export default function ProjectTimeline({ project, tasks, users, onAddTask, onOpenTask }) {
-  const bounds = useMemo(() => {
-    if (!tasks.length) {
-      const start = new Date(); start.setHours(0, 0, 0, 0);
-      return { start, days: 35 };
-    }
-    const starts = tasks.map((t) => new Date(`${t.startDate}T00:00:00`).getTime());
-    const ends = tasks.map((t) => new Date(`${t.endDate}T00:00:00`).getTime());
-    const start = new Date(Math.min(...starts) - DAY * 2);
-    const end = new Date(Math.max(...ends) + DAY * 3);
-    return { start, days: Math.max(21, Math.round((end - start) / DAY)) };
-  }, [tasks]);
+  const bounds = useMemo(() => timelineBounds(tasks), [tasks]);
+  const timelineTasks = bounds.validTasks;
 
   const ticks = useMemo(() => Array.from({ length: 6 }, (_, i) => {
-    const date = new Date(bounds.start.getTime() + (bounds.days * i / 5) * DAY);
+    const date = new Date(bounds.startMs + ((bounds.days - 1) * i / 5) * DAY_MS);
     return { date, left: i * 20 };
   }), [bounds]);
 
-  const todayLeft = ((new Date().setHours(0, 0, 0, 0) - bounds.start.getTime()) / DAY / bounds.days) * 100;
+  const now = new Date();
+  const todayMs = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 12);
+  const todayLeft = ((todayMs - bounds.startMs) / DAY_MS / bounds.days) * 100;
 
   return (
     <div className="max-w-[1400px] mx-auto">
@@ -47,7 +39,7 @@ export default function ProjectTimeline({ project, tasks, users, onAddTask, onOp
         </button>
       </div>
 
-      <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-[28px] p-4 sm:p-7 shadow-sm overflow-hidden">
+      <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-[28px] p-4 sm:p-7 shadow-sm overflow-x-auto">
         <div className="flex gap-2 mb-7 overflow-x-auto pb-1">
           <span className="px-4 py-2 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center gap-2 whitespace-nowrap"><CalendarDays size={14} /> Project timeline</span>
         </div>
@@ -55,7 +47,7 @@ export default function ProjectTimeline({ project, tasks, users, onAddTask, onOp
         <div className="relative min-w-[720px] min-h-[390px] rounded-3xl bg-gray-50/70 dark:bg-black/20 border border-gray-100 dark:border-zinc-800 px-5 py-8 overflow-hidden">
           {ticks.map((tick) => (
             <div key={tick.left} className="absolute top-0 bottom-9 border-l border-dashed border-gray-200 dark:border-zinc-800" style={{ left: `${tick.left}%` }}>
-              <span className="absolute -bottom-6 -translate-x-1/2 whitespace-nowrap text-[10px] text-gray-400">{tick.date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}</span>
+              <span className="absolute -bottom-6 -translate-x-1/2 whitespace-nowrap text-[10px] text-gray-400">{tick.date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', timeZone: 'UTC' })}</span>
             </div>
           ))}
           {todayLeft >= 0 && todayLeft <= 100 && (
@@ -66,21 +58,18 @@ export default function ProjectTimeline({ project, tasks, users, onAddTask, onOp
           )}
 
           <div className="relative z-20 space-y-5 pt-2">
-            {tasks.length === 0 ? (
+            {timelineTasks.length === 0 ? (
               <div className="h-56 grid place-items-center text-sm text-gray-400">ยังไม่มีงานในโปรเจกต์นี้</div>
-            ) : tasks.map((task, index) => {
-              const start = (new Date(`${task.startDate}T00:00:00`) - bounds.start) / DAY;
-              const duration = Math.max(2, (new Date(`${task.endDate}T00:00:00`) - new Date(`${task.startDate}T00:00:00`)) / DAY + 1);
-              const left = Math.max(0, (start / bounds.days) * 100);
-              const width = Math.max(20, Math.min(66, (duration / bounds.days) * 100));
+            ) : timelineTasks.map((task, index) => {
+              const { left, width } = timelinePosition(task, bounds);
               const person = users.find((u) => u.id === task.assigneeId);
               const pct = progress(task);
               const colors = ['bg-blue-600', 'bg-teal-500', 'bg-violet-600', 'bg-orange-500'];
               const fillColor = colors[index % colors.length];
               return (
-                <button key={task.id} onClick={() => onOpenTask?.(task.id)}
+                <button key={task.id} onClick={() => onOpenTask?.(task.id)} title={`${task.title}: ${task.startDate} – ${task.endDate}`}
                   className="relative h-14 rounded-full overflow-hidden border border-gray-300 dark:border-zinc-600 bg-gray-400 dark:bg-zinc-700 text-white shadow-lg hover:-translate-y-0.5 hover:shadow-xl transition-all flex items-center gap-2 px-3 text-left"
-                  style={{ marginLeft: `${left}%`, width: `${Math.min(width, 100 - left)}%`, minWidth: 220 }}>
+                  style={{ marginLeft: `${left}%`, width: `${width}%` }}>
                   <span className={`absolute inset-y-0 left-0 ${fillColor} rounded-full transition-[width] duration-500`} style={{ width: `${pct}%` }} aria-hidden="true" />
                   <span className="relative z-10 shrink-0"><Avatar user={person} size={30} /></span>
                   <div className="relative z-10 min-w-0 flex-1 drop-shadow-[0_1px_1px_rgba(0,0,0,.45)]">

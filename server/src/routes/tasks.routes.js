@@ -5,6 +5,7 @@ import { requireAuth } from '../auth/jwt.js';
 import { detectConflicts, assessRisk } from '../services/riskEngine.js';
 import { notify, notifyMany } from '../services/notify.js';
 import { upsertTaskEvent, deleteTaskEvent } from '../services/calendar.js';
+import { reconcileDraftDueDates } from '../services/taskSchedule.js';
 import {
   TASK_STATUSES,
   DRAFT_STATUSES,
@@ -342,7 +343,19 @@ router.patch('/:id', async (req, res) => {
     if (!nextPm || nextPm.disabled || !['pm', 'admin'].includes(nextPm.role))
       throw badRequest('INVALID_PM', 'pmId must identify an active PM or admin');
   }
+  const nextStartDate = patch.startDate || task.startDate;
+  const nextEndDate = patch.endDate || task.endDate;
+  const scheduleAdjustments = (patch.startDate !== undefined || patch.endDate !== undefined)
+    ? reconcileDraftDueDates(
+        db.drafts.find((draft) => draft.taskId === task.id),
+        nextStartDate,
+        nextEndDate
+      )
+    : [];
   db.tasks.update(task.id, patch);
+  for (const adjustment of scheduleAdjustments) {
+    db.drafts.update(adjustment.draftId, { dueDate: adjustment.to });
+  }
   let updated = recomputeHours(db.tasks.byId(task.id));
 
   // notify assignee on status change
@@ -401,7 +414,13 @@ router.patch('/:id', async (req, res) => {
     db.tasks.update(updated.id, { calendarEventId: null });
   }
 
-  res.json({ task: decorate(db.tasks.byId(updated.id), req.user), conflict, risk, calendarWarning });
+  res.json({
+    task: decorate(db.tasks.byId(updated.id), req.user),
+    conflict,
+    risk,
+    calendarWarning,
+    scheduleAdjustments,
+  });
 });
 
 // ── Delete task ──────────────────────────────────────────────────────────────

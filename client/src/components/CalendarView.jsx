@@ -6,12 +6,13 @@ import { fmtDate, monthGrid, todayKey } from '../utils.js';
 
 const WEEKDAYS = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
 
-export default function CalendarView({ projects, onOpenTask, defaultAssigneeId }) {
+export default function CalendarView({ projects, onOpenTask, defaultAssigneeId, refreshKey = 0 }) {
   const now = new Date();
   const [cursor, setCursor] = useState({ y: now.getFullYear(), m: now.getMonth() });
   const [members, setMembers] = useState([]);
   const [selectedId, setSelectedId] = useState(defaultAssigneeId || null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const grid = useMemo(() => monthGrid(cursor.y, cursor.m), [cursor]);
 
@@ -20,6 +21,7 @@ export default function CalendarView({ projects, onOpenTask, defaultAssigneeId }
 
   const load = async () => {
     setLoading(true);
+    setError('');
     try {
       const { members } = await api.teamWorkload(rangeFrom, rangeTo);
       setMembers(members);
@@ -28,10 +30,12 @@ export default function CalendarView({ projects, onOpenTask, defaultAssigneeId }
         const worst = [...members].sort((a, b) => b.overloadedCount - a.overloadedCount)[0];
         setSelectedId(worst.user.id);
       }
+    } catch (loadError) {
+      setError(loadError.message || 'โหลด Workload ไม่สำเร็จ');
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [rangeFrom, rangeTo]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [rangeFrom, rangeTo, refreshKey]);
 
   const selected = members.find((m) => m.user.id === selectedId) || members[0];
   const monthLabel = new Date(cursor.y, cursor.m, 1).toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
@@ -76,7 +80,12 @@ export default function CalendarView({ projects, onOpenTask, defaultAssigneeId }
         </div>
       </div>
 
-      {!selected ? (
+      {error ? (
+        <div className="p-8 text-center text-sm">
+          <p role="alert" className="text-red-600">{error}</p>
+          <button onClick={load} className="mt-3 px-3 py-2 rounded-lg border border-gray-200 text-xs font-bold">ลองใหม่</button>
+        </div>
+      ) : !selected ? (
         <div className="p-8 text-center text-gray-400 text-sm">{loading ? 'กำลังโหลด…' : 'ไม่มีข้อมูล'}</div>
       ) : (
         <>
