@@ -17,6 +17,7 @@ import workloadRoutes from './routes/workload.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import aeRoutes from './routes/ae.routes.js';
 import brandsRoutes from './routes/brands.routes.js';
+import kanbanRoutes from './routes/kanban.routes.js';
 import { startScheduler } from './services/scheduler.js';
 import { errorHandler } from './http.js';
 
@@ -53,6 +54,7 @@ app.use('/api/workload', workloadRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/ae', aeRoutes);
 app.use('/api/brands', brandsRoutes);
+app.use('/api/kanban', kanbanRoutes);
 
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'API endpoint not found', code: 'NOT_FOUND' });

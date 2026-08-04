@@ -305,6 +305,7 @@ export default function Dashboard() {
                 currentUser={user}
                 onOpenTask={(id) => handleNavigate({ type: 'task', id })}
                 onAddTask={(projectId) => openNewTask(projects.find((project) => project.id === projectId))}
+                onChanged={() => { if (selected?.id) loadTasks(selected.id); }}
                 refreshKey={boardVersion}
               />
             ) : view === 'calendar' ? (

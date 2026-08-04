@@ -14,39 +14,13 @@ import {
 import api from '../api/client.js';
 import { Avatar, RiskBadge, Spinner } from './ui.jsx';
 import { fmtDate } from '../utils.js';
-
-const STORAGE_KEY = 'tracking_task_kanban_columns_v1';
-
-const DEFAULT_COLUMNS = [
-  { id: 'brief', label: 'Brief', statuses: ['To Do'], targetStatus: 'To Do', visible: true },
-  { id: 'worksheet', label: 'Worksheet', statuses: ['Draft 1'], targetStatus: 'Draft 1', visible: true },
-  { id: 'progress', label: 'In Progress', statuses: ['Draft 2'], targetStatus: 'Draft 2', visible: true },
-  { id: 'review', label: 'Review', statuses: ['Final'], targetStatus: 'Final', visible: true },
-  { id: 'revision', label: 'Revision', statuses: ['Client Review'], targetStatus: 'Client Review', visible: true },
-  { id: 'approved', label: 'Approved', statuses: ['Approval', 'Done'], targetStatus: 'Approval', visible: true },
-  { id: 'archive', label: 'Archive', statuses: ['Cancelled', 'Archive'], targetStatus: 'Archive', visible: true, archive: true },
-];
-
-function loadColumns() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (!Array.isArray(saved)) return DEFAULT_COLUMNS;
-    const byId = new Map(DEFAULT_COLUMNS.map((column) => [column.id, column]));
-    const restored = saved
-      .filter((column) => byId.has(column.id))
-      .map((column) => ({
-        ...byId.get(column.id),
-        label: String(column.label || byId.get(column.id).label).slice(0, 40),
-        visible: column.visible !== false,
-      }));
-    for (const column of DEFAULT_COLUMNS) {
-      if (!restored.some((item) => item.id === column.id)) restored.push(column);
-    }
-    return restored;
-  } catch {
-    return DEFAULT_COLUMNS;
-  }
-}
+import {
+  DEFAULT_KANBAN_COLUMNS,
+  groupTasksByColumn,
+  replaceTaskCard,
+  resolveKanbanMove,
+  restoreKanbanColumns,
+} from '../kanbanModel.js';
 
 function BoardError({ message, onRetry }) {
   return (
@@ -59,13 +33,14 @@ function BoardError({ message, onRetry }) {
   );
 }
 
-export default function KanbanBoard({ users, projects, currentUser, onOpenTask, onAddTask, refreshKey = 0 }) {
+export default function KanbanBoard({ users, projects, currentUser, onOpenTask, onAddTask, onChanged, refreshKey = 0 }) {
   const [tasks, setTasks] = useState(null);
   const [error, setError] = useState('');
   const [busyTaskId, setBusyTaskId] = useState(null);
   const [projectId, setProjectId] = useState('');
-  const [columns, setColumns] = useState(loadColumns);
+  const [columns, setColumns] = useState(() => restoreKanbanColumns());
   const [configOpen, setConfigOpen] = useState(false);
+  const [configSaving, setConfigSaving] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
 
   const canConfigure = ['pm', 'admin'].includes(currentUser?.role);
@@ -73,8 +48,12 @@ export default function KanbanBoard({ users, projects, currentUser, onOpenTask, 
   const load = useCallback(async () => {
     setError('');
     try {
-      const { tasks: rows } = await api.tasks();
+      const [{ tasks: rows }, config] = await Promise.all([
+        api.tasks(),
+        api.kanbanConfig(),
+      ]);
       setTasks(rows);
+      setColumns(restoreKanbanColumns(config.columns));
     } catch (err) {
       setError(err.message || 'Unable to load the board');
     }
@@ -92,19 +71,23 @@ export default function KanbanBoard({ users, projects, currentUser, onOpenTask, 
   const archiveCount = visibleTasks.filter((task) =>
     ['Cancelled', 'Archive'].includes(task.status)
   ).length;
+  const tasksByColumn = useMemo(
+    () => groupTasksByColumn(visibleTasks, columns),
+    [visibleTasks, columns]
+  );
 
-  const moveTask = async (task, column) => {
-    if (column.statuses.includes(task.status)) return;
-    const nextStatus = column.targetStatus;
+  const updateTaskStatus = async (task, nextStatus) => {
+    if (nextStatus === task.status) return;
     if (!task.workflow?.allowedTransitions?.includes(nextStatus)) {
-      setError(`"${task.title}" cannot move from ${task.status} to ${nextStatus}.`);
+      setError(`ย้าย "${task.title}" จาก ${task.status} ไป ${nextStatus} ไม่ได้ กรุณาใช้ transition ที่ workflow อนุญาต`);
       return;
     }
     setBusyTaskId(task.id);
     setError('');
     try {
       const { task: updated } = await api.updateTask(task.id, { status: nextStatus });
-      setTasks((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setTasks((current) => replaceTaskCard(current, updated));
+      onChanged?.(updated);
     } catch (err) {
       setError(err.message || 'Unable to move task');
     } finally {
@@ -112,12 +95,29 @@ export default function KanbanBoard({ users, projects, currentUser, onOpenTask, 
     }
   };
 
-  const saveColumns = (next) => {
-    setColumns(next);
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(next.map(({ id, label, visible }) => ({ id, label, visible })))
-    );
+  const moveTask = async (task, column) => {
+    const move = resolveKanbanMove(task, column);
+    if (move.noop) return;
+    if (!move.allowed) {
+      setError(`ย้าย "${task.title}" จาก ${task.status} ไป ${move.nextStatus} ไม่ได้ กรุณาใช้ transition ที่ workflow อนุญาต`);
+      return;
+    }
+    await updateTaskStatus(task, move.nextStatus);
+  };
+
+  const saveColumns = async (next) => {
+    setConfigSaving(true);
+    setError('');
+    try {
+      const preferences = next.map(({ id, label, visible }) => ({ id, label, visible }));
+      const result = await api.updateKanbanConfig(preferences);
+      setColumns(restoreKanbanColumns(result.columns));
+      setConfigOpen(false);
+    } catch (saveError) {
+      setError(saveError.message || 'Unable to save board configuration');
+    } finally {
+      setConfigSaving(false);
+    }
   };
 
   if (!tasks && !error) return <Spinner label="Loading board..." />;
@@ -133,7 +133,7 @@ export default function KanbanBoard({ users, projects, currentUser, onOpenTask, 
         <div>
           <p className="text-xs font-bold text-blue-600">PM KANBAN</p>
           <h3 className="mt-1 text-xl font-black text-gray-950 dark:text-white">บอร์ดงานครีเอทีฟ</h3>
-          <p className="mt-1 text-xs text-gray-400">ลากการ์ดตามขั้นตอนงานเดิม โดยใช้ข้อมูลเดียวกับ Timeline และปฏิทิน</p>
+          <p className="mt-1 text-xs text-gray-400">1 การ์ด = 1 งาน · เพิ่ม draft/ขั้นตอนไม่สร้างการ์ดซ้ำ · ลากได้เฉพาะ transition ที่ workflow อนุญาต</p>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
           <select
@@ -173,7 +173,7 @@ export default function KanbanBoard({ users, projects, currentUser, onOpenTask, 
 
       <div className="flex gap-3 overflow-x-auto rounded-[28px] border border-gray-200 bg-white p-4 pb-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
         {displayedColumns.map((column) => {
-          const rows = visibleTasks.filter((task) => column.statuses.includes(task.status));
+          const rows = tasksByColumn.get(column.id) || [];
           return (
             <section
               key={column.id}
@@ -232,9 +232,22 @@ export default function KanbanBoard({ users, projects, currentUser, onOpenTask, 
                         <span>ตรงเวลา <b className="text-gray-700 dark:text-zinc-200">{Math.round((task.risk?.onTimeProbability || 0) * 100)}%</b></span>
                         <span className="text-right capitalize">Priority <b className={task.priority === 'high' ? 'text-red-600' : 'text-gray-700 dark:text-zinc-200'}>{task.priority === 'high' ? 'สูง' : task.priority === 'low' ? 'ต่ำ' : 'ปกติ'}</b></span>
                       </div>
-                      {column.statuses.length > 1 && (
-                        <p className="mt-2 text-[9px] font-bold uppercase tracking-wide text-gray-400">{task.status}</p>
-                      )}
+                      <div className="mt-2 flex items-center gap-2 border-t border-gray-100 pt-2 dark:border-zinc-700">
+                        <select
+                          value={task.status}
+                          disabled={busyTaskId === task.id || !(task.workflow?.allowedTransitions?.length)}
+                          onChange={(event) => updateTaskStatus(task, event.target.value)}
+                          onClick={(event) => event.stopPropagation()}
+                          className="min-w-0 flex-1 rounded-md border border-gray-200 bg-white px-1.5 py-1 text-[9px] font-bold text-gray-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                          aria-label={`Change status for ${task.title}`}
+                        >
+                          <option value={task.status}>{task.status}</option>
+                          {(task.workflow?.allowedTransitions || []).map((status) => (
+                            <option key={status} value={status}>→ {status}</option>
+                          ))}
+                        </select>
+                        <span className="shrink-0 text-[9px] font-bold text-gray-400">{task.drafts?.length || 0} ขั้นตอน</span>
+                      </div>
                     </article>
                   );
                 })}
@@ -247,18 +260,16 @@ export default function KanbanBoard({ users, projects, currentUser, onOpenTask, 
       {configOpen && canConfigure && (
         <BoardConfig
           columns={columns}
+          saving={configSaving}
           onClose={() => setConfigOpen(false)}
-          onSave={(next) => {
-            saveColumns(next);
-            setConfigOpen(false);
-          }}
+          onSave={saveColumns}
         />
       )}
     </div>
   );
 }
 
-function BoardConfig({ columns, onClose, onSave }) {
+function BoardConfig({ columns, saving, onClose, onSave }) {
   const [draft, setDraft] = useState(columns);
 
   const move = (index, direction) => {
@@ -275,7 +286,7 @@ function BoardConfig({ columns, onClose, onSave }) {
         <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-zinc-800">
           <div>
             <h3 className="font-black text-gray-900 dark:text-white">ตั้งค่าคอลัมน์บอร์ด</h3>
-            <p className="text-[11px] text-gray-500">ปรับชื่อ ลำดับ และการแสดงผล โดยไม่เปลี่ยนสถานะหลักของ Workflow</p>
+            <p className="text-[11px] text-gray-500">ปรับชื่อ ลำดับ และการแสดงผลเท่านั้น · ไม่เพิ่มการ์ดและไม่เปลี่ยนสถานะหลักของ Workflow</p>
           </div>
           <button onClick={onClose} className="p-1 text-gray-400"><X size={18} /></button>
         </div>
@@ -306,8 +317,8 @@ function BoardConfig({ columns, onClose, onSave }) {
           ))}
         </div>
         <div className="flex justify-end gap-2 border-t border-gray-100 px-5 py-4 dark:border-zinc-800">
-          <button onClick={() => setDraft(DEFAULT_COLUMNS)} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold dark:border-zinc-700">คืนค่าเริ่มต้น</button>
-          <button onClick={() => onSave(draft.map((column) => ({ ...column, label: column.label.trim() || DEFAULT_COLUMNS.find((item) => item.id === column.id).label })))} className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white">บันทึก</button>
+          <button onClick={() => setDraft(DEFAULT_KANBAN_COLUMNS)} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold dark:border-zinc-700">คืนค่าเริ่มต้น</button>
+          <button disabled={saving} onClick={() => onSave(draft.map((column) => ({ ...column, label: column.label.trim() || DEFAULT_KANBAN_COLUMNS.find((item) => item.id === column.id).label })))} className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{saving ? 'กำลังบันทึก…' : 'บันทึก'}</button>
         </div>
       </div>
     </div>

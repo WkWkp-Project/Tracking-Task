@@ -79,6 +79,10 @@ export const api = {
   addTaskUpdate: (id, b) => request('POST', `/tasks/${id}/updates`, b),
   deleteTaskUpdate: (id, updateId) => request('DELETE', `/tasks/${id}/updates/${updateId}`),
 
+  // Kanban presentation config (workflow statuses remain server-controlled)
+  kanbanConfig: () => request('GET', '/kanban/config'),
+  updateKanbanConfig: (columns) => request('PATCH', '/kanban/config', { columns }),
+
   // chat
   conversations: () => request('GET', '/chat/conversations'),
   messages: (channelKey) => request('GET', `/chat/messages?channelKey=${encodeURIComponent(channelKey)}`),
