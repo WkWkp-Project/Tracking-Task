@@ -100,6 +100,15 @@ export function assertDateRange(startDate, endDate) {
   }
 }
 
+// Express 4 does not forward rejected route promises to error middleware.
+// Keep every async route behind this adapter so thrown HttpErrors become a
+// normal 4xx/5xx response instead of an unhandled rejection that can stop Node.
+export function asyncRoute(handler) {
+  return function asyncRouteHandler(req, res, next) {
+    Promise.resolve(handler(req, res, next)).catch(next);
+  };
+}
+
 export function errorHandler(err, _req, res, _next) {
   if (err instanceof SyntaxError && err.type === 'entity.parse.failed') {
     return res.status(400).json({

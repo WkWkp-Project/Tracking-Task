@@ -20,6 +20,9 @@ import brandsRoutes from './routes/brands.routes.js';
 import kanbanRoutes from './routes/kanban.routes.js';
 import { startScheduler } from './services/scheduler.js';
 import { errorHandler } from './http.js';
+import { mountBuiltClient } from './clientHosting.js';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 validateRuntimeConfig();
 await ensureSeed();
@@ -59,6 +62,9 @@ app.use('/api/kanban', kanbanRoutes);
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'API endpoint not found', code: 'NOT_FOUND' });
 });
+const serverDir = path.dirname(fileURLToPath(import.meta.url));
+const clientDist = path.resolve(serverDir, '..', '..', 'client', 'dist');
+const clientMounted = mountBuiltClient(app, clientDist);
 app.use(errorHandler);
 
 const server = http.createServer(app);
@@ -70,6 +76,7 @@ server.listen(config.port, () => {
   console.log('  ┌───────────────────────────────────────────────┐');
   console.log(`  │  PM Hub API running on http://localhost:${config.port}    │`);
   console.log(`  │  Google integration: ${googleConfigured ? 'CONFIGURED ✓' : 'not configured'}            │`);
+  console.log(`  │  Built client: ${clientMounted ? 'SERVED ✓' : 'not found (API only)'}                  │`);
   console.log('  └───────────────────────────────────────────────┘');
   console.log('');
 });

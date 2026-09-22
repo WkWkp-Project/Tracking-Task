@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import db from '../db.js';
 import { requireAuth } from '../auth/jwt.js';
 import { deleteTaskCascade, removeTaskCalendarEvent } from '../services/cascade.js';
+import { asyncRoute } from '../http.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -52,7 +53,7 @@ router.patch('/:id', (req, res) => {
   res.json({ project: db.projects.byId(p.id) });
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', asyncRoute(async (req, res) => {
   const project = db.projects.byId(req.params.id);
   if (!project) return res.status(404).json({ error: 'not found' });
   if (!canManageProject(req.user, project)) return res.status(403).json({ error: 'เฉพาะ PM ที่ดูแลโปรเจกต์นี้หรือแอดมินเท่านั้น' });
@@ -65,6 +66,6 @@ router.delete('/:id', async (req, res) => {
   }
   db.projects.remove(project.id);
   res.json({ ok: true });
-});
+}));
 
 export default router;

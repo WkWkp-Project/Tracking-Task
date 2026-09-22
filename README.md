@@ -25,6 +25,20 @@ npm run dev             # รัน backend (4000) + frontend (5173) พร้�
 
 > ครั้งต่อไปแค่ `npm run dev` พอ
 
+### รันใช้งานจริง
+
+คัดลอก `server/.env.example` เป็น `server/.env` แล้วตั้ง `JWT_SECRET`,
+`CHAT_ENCRYPTION_KEY` และ `ADMIN_PASSWORD` เป็นค่าที่ปลอดภัย และตั้ง
+`CLIENT_ORIGIN` เป็น URL ที่ผู้ใช้เปิดจริง (ถ้ารันในเครื่องเดียวกันใช้
+`http://localhost:4000`) จากนั้นรัน:
+
+```bash
+npm start
+```
+
+คำสั่งนี้ build หน้าเว็บ เปิดโหมด production และให้ backend เสิร์ฟทั้งหน้าเว็บกับ API
+ที่ `http://localhost:4000` โดยตรง ระบบจะไม่เริ่มถ้ายังใช้ secret หรือรหัสแอดมินค่าเริ่มต้น
+
 ### บัญชีทดสอบ (seed อัตโนมัติ)
 | Email | Password | บทบาท |
 |---|---|---|

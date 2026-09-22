@@ -4,7 +4,7 @@ import db from '../db.js';
 import { requireAuth } from '../auth/jwt.js';
 import { detectConflicts, assessRisk } from '../services/riskEngine.js';
 import { notify, notifyMany } from '../services/notify.js';
-import { upsertTaskEvent, deleteTaskEvent } from '../services/calendar.js';
+import { calendarOwnerForTask, upsertTaskEvent, deleteTaskEvent } from '../services/calendar.js';
 import { deleteTaskCascade, removeTaskCalendarEvent } from '../services/cascade.js';
 import { reconcileDraftDueDates } from '../services/taskSchedule.js';
 import {
@@ -21,6 +21,7 @@ import {
 import {
   assertDateRange,
   assertPlainObject,
+  asyncRoute,
   badRequest,
   cleanString,
   dateString,
@@ -207,7 +208,7 @@ router.get('/:id', (req, res) => {
 });
 
 // ── Create task (with drafts) + conflict warning + optional calendar sync ────
-router.post('/', async (req, res) => {
+router.post('/', asyncRoute(async (req, res) => {
   assertPlainObject(req.body);
   const {
     projectId, title, description, pmId, assigneeId, status,
@@ -257,6 +258,7 @@ router.post('/', async (req, res) => {
     loggedHours: 0,
     syncCalendar: !!syncCalendar,
     calendarEventId: null,
+    calendarOwnerId: null,
     createdAt: new Date().toISOString(),
     createdBy: req.user.id,
   };
@@ -300,17 +302,17 @@ router.post('/', async (req, res) => {
         assignee?.email,
         db.users.byId(task.pmId)?.email,
       ]);
-      db.tasks.update(id, { calendarEventId: eventId });
+      db.tasks.update(id, { calendarEventId: eventId, calendarOwnerId: req.user.id });
     } catch (e) {
       calendarWarning = e.code || e.message;
     }
   }
 
   res.status(201).json({ task: decorate(db.tasks.byId(id), req.user), conflict, risk, calendarWarning });
-});
+}));
 
 // ── Update task ──────────────────────────────────────────────────────────────
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', asyncRoute(async (req, res) => {
   const task = db.tasks.byId(req.params.id);
   if (!task) return res.status(404).json({ error: 'not found' });
   assertPlainObject(req.body);
@@ -322,9 +324,9 @@ router.patch('/:id', async (req, res) => {
   for (const f of fields) if (req.body?.[f] !== undefined) patch[f] = req.body[f];
   const detailFields = fields.filter((field) => field !== 'status');
   if (detailFields.some((field) => patch[field] !== undefined)) requireTaskManager(req, task);
-  if (patch.status && !TASK_STATUSES.includes(patch.status))
-    return res.status(400).json({ error: 'invalid status' });
-  if (patch.status && !canTransitionTask(req.user, task, patch.status, taskProject(task))) {
+  if (patch.status !== undefined && !TASK_STATUSES.includes(patch.status))
+    throw badRequest('VALIDATION_ERROR', 'status is invalid', { field: 'status', allowed: TASK_STATUSES });
+  if (patch.status !== undefined && !canTransitionTask(req.user, task, patch.status, taskProject(task))) {
     throw badRequest(
       'INVALID_STATUS_TRANSITION',
       `Cannot move task from ${task.status} to ${patch.status}`,
@@ -407,17 +409,28 @@ router.patch('/:id', async (req, res) => {
   let calendarWarning = null;
   if (updated.syncCalendar) {
     try {
-      const { eventId } = await upsertTaskEvent(req.user, updated, [
+      const calendarOwner = calendarOwnerForTask(updated, req.user, (id) => db.users.byId(id));
+      const { eventId } = await upsertTaskEvent(calendarOwner, updated, [
         assignee?.email,
         db.users.byId(updated.pmId)?.email,
       ]);
-      if (eventId !== updated.calendarEventId) db.tasks.update(updated.id, { calendarEventId: eventId });
+      db.tasks.update(updated.id, {
+        calendarEventId: eventId,
+        calendarOwnerId: calendarOwner.id,
+      });
     } catch (e) {
       calendarWarning = e.code || e.message;
     }
   } else if (!updated.syncCalendar && updated.calendarEventId) {
-    try { await deleteTaskEvent(req.user, updated.calendarEventId); } catch {}
-    db.tasks.update(updated.id, { calendarEventId: null });
+    try {
+      const calendarOwner = calendarOwnerForTask(updated, req.user, (id) => db.users.byId(id));
+      await deleteTaskEvent(calendarOwner, updated.calendarEventId);
+      db.tasks.update(updated.id, { calendarEventId: null, calendarOwnerId: null });
+    } catch (error) {
+      calendarWarning = error.code || error.message;
+      // Keep ownership metadata so a later retry can remove the remote event.
+      db.tasks.update(updated.id, { syncCalendar: true });
+    }
   }
 
   res.json({
@@ -427,17 +440,17 @@ router.patch('/:id', async (req, res) => {
     calendarWarning,
     scheduleAdjustments,
   });
-});
+}));
 
 // ── Delete task ──────────────────────────────────────────────────────────────
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', asyncRoute(async (req, res) => {
   const task = db.tasks.byId(req.params.id);
   if (!task) return res.status(404).json({ error: 'not found' });
   requireTaskManager(req, task);
   await removeTaskCalendarEvent(req.user, task);
   deleteTaskCascade(task.id);
   res.json({ ok: true });
-});
+}));
 
 // ── Task notes & team comments ──────────────────────────────────────────────
 router.get('/:id/updates', (req, res) => {
