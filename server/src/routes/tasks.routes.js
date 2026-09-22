@@ -63,6 +63,7 @@ function recomputeHours(task) {
 }
 
 function assigneeOtherTasks(task) {
+  if (!task.assigneeId) return [];
   return db.tasks.find((t) => t.assigneeId === task.assigneeId && t.id !== task.id);
 }
 
@@ -215,16 +216,18 @@ router.post('/', asyncRoute(async (req, res) => {
     startDate, endDate, priority, syncCalendar, drafts,
   } = req.body || {};
 
-  if (!projectId || !title || !assigneeId || !startDate || !endDate)
-    return res.status(400).json({ error: 'projectId, title, assigneeId, startDate, endDate required' });
+  if (!projectId || !title || !startDate || !endDate)
+    return res.status(400).json({ error: 'projectId, title, startDate, endDate required' });
   if (status && !TASK_STATUSES.includes(status))
     return res.status(400).json({ error: 'invalid status' });
   const project = db.projects.byId(projectId);
   if (!project) return res.status(404).json({ error: 'project not found' });
   if (project.archived) return res.status(409).json({ error: 'cannot create a task in an archived project' });
   if (!canCreateTask(req.user, project)) throw forbidden('Only the project PM or an admin can create tasks');
-  const assignee = db.users.byId(assigneeId);
-  if (!isPmWorker(assignee)) return res.status(400).json({ error: 'assignee must be an active PM production worker' });
+  const normalizedAssigneeId = assigneeId || null;
+  const assignee = normalizedAssigneeId ? db.users.byId(normalizedAssigneeId) : null;
+  if (normalizedAssigneeId && !isPmWorker(assignee))
+    return res.status(400).json({ error: 'assignee must be an active PM production worker' });
   const validTitle = cleanString(title, 'title', { required: true, max: 200 });
   const validDescription = cleanString(description, 'description', { max: 10000 });
   const validStart = dateString(startDate, 'startDate', { required: true });
@@ -249,7 +252,7 @@ router.post('/', asyncRoute(async (req, res) => {
     title: validTitle,
     description: validDescription || '',
     pmId: ownerId,
-    assigneeId,
+    assigneeId: normalizedAssigneeId,
     status: 'To Do',
     startDate: validStart,
     endDate: validEnd,
@@ -267,10 +270,10 @@ router.post('/', asyncRoute(async (req, res) => {
 
   // ── conflict / risk evaluation -> notify PM if dangerous ──
   const others = assigneeOtherTasks(task);
-  const conflict = detectConflicts(assignee, others, task);
-  const risk = riskFor(task);
+  const conflict = assignee ? detectConflicts(assignee, others, task) : null;
+  const risk = assignee ? riskFor(task) : null;
 
-  if (conflict.hasConflict || ['High', 'Critical'].includes(risk.level)) {
+  if (conflict?.hasConflict || ['High', 'Critical'].includes(risk?.level)) {
     notify(task.pmId, {
       type: 'task_conflict',
       severity: risk.level === 'Critical' ? 'critical' : 'warning',
@@ -284,8 +287,8 @@ router.post('/', asyncRoute(async (req, res) => {
     });
   }
   // notify the assignee they got a new task
-  if (assigneeId !== req.user.id) {
-    notify(assigneeId, {
+  if (normalizedAssigneeId && normalizedAssigneeId !== req.user.id) {
+    notify(normalizedAssigneeId, {
       type: 'task_assigned',
       title: `📌 ได้รับงานใหม่: ${title}`,
       body: `กำหนดส่ง ${endDate}`,
@@ -344,6 +347,7 @@ router.patch('/:id', asyncRoute(async (req, res) => {
   if (patch.priority !== undefined)
     patch.priority = enumValue(patch.priority, 'priority', ['low', 'normal', 'high'], { required: true });
   if (patch.syncCalendar !== undefined) patch.syncCalendar = Boolean(patch.syncCalendar);
+  if (patch.assigneeId === '') patch.assigneeId = null;
   if (patch.assigneeId && !isPmWorker(db.users.byId(patch.assigneeId)))
     return res.status(400).json({ error: 'assignee must be an active PM production worker' });
   if (patch.pmId) {
@@ -367,7 +371,7 @@ router.patch('/:id', asyncRoute(async (req, res) => {
   let updated = recomputeHours(db.tasks.byId(task.id));
 
   // notify assignee on status change
-  if (patch.status && patch.status !== prevStatus && updated.assigneeId !== req.user.id) {
+  if (patch.status && patch.status !== prevStatus && updated.assigneeId && updated.assigneeId !== req.user.id) {
     notify(updated.assigneeId, {
       type: 'task_status',
       title: `🔁 สถานะงานเปลี่ยน: ${updated.title}`,
@@ -380,21 +384,21 @@ router.patch('/:id', asyncRoute(async (req, res) => {
   // re-evaluate conflict/risk, warn PM if it just became dangerous
   const assignee = db.users.byId(updated.assigneeId);
   const others = assigneeOtherTasks(updated);
-  const conflict = detectConflicts(assignee, others, updated);
-  const risk = riskFor(updated);
+  const conflict = assignee ? detectConflicts(assignee, others, updated) : null;
+  const risk = assignee ? riskFor(updated) : null;
 
   // reassigned to a different worker (e.g. someone takes over) → notify them
   if (patch.assigneeId && patch.assigneeId !== prevAssigneeId && patch.assigneeId !== req.user.id) {
     notify(patch.assigneeId, {
       type: 'task_assigned',
-      severity: conflict.hasConflict ? 'warning' : 'info',
+      severity: conflict?.hasConflict ? 'warning' : 'info',
       title: `🔄 ได้รับมอบหมายงาน (ทดแทน): ${updated.title}`,
-      body: `กำหนดส่ง ${updated.endDate}` + (conflict.hasConflict ? ' • ระวังงานชน' : ''),
+      body: `กำหนดส่ง ${updated.endDate}` + (conflict?.hasConflict ? ' • ระวังงานชน' : ''),
       link: `/tasks/${updated.id}`,
       meta: { taskId: updated.id },
     });
   }
-  if (conflict.hasConflict || risk.level === 'Critical') {
+  if (conflict?.hasConflict || risk?.level === 'Critical') {
     notify(updated.pmId, {
       type: 'task_conflict',
       severity: risk.level === 'Critical' ? 'critical' : 'warning',

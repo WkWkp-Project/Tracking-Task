@@ -21,7 +21,7 @@ function fixture() {
     users: [pm, worker, outsider], projects: [project], tasks: [task], drafts: [],
     attachments: [], taskUpdates: [], messages: [], notifications: [], timeLogs: [],
   });
-  return { outsider, task };
+  return { pm, outsider, project, task };
 }
 
 async function withServer(run) {
@@ -47,6 +47,49 @@ async function patchTask(baseUrl, token, body) {
   });
   return { status: response.status, body: await response.json() };
 }
+
+async function createTask(baseUrl, token, body) {
+  const response = await fetch(`${baseUrl}/api/tasks`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+  return { status: response.status, body: await response.json() };
+}
+
+test('a PM can create a task before assigning it to a worker', async () => {
+  const { pm, project } = fixture();
+  const token = signToken(pm);
+  await withServer(async (baseUrl) => {
+    const result = await createTask(baseUrl, token, {
+      projectId: project.id,
+      title: 'Unassigned task',
+      startDate: '2026-09-22',
+      endDate: '2026-09-25',
+      estimatedHours: 8,
+    });
+
+    assert.equal(result.status, 201);
+    assert.equal(result.body.task.assigneeId, null);
+    assert.equal(result.body.conflict, null);
+    assert.equal(result.body.risk, null);
+    assert.equal(db.raw.notifications.some((notification) => !notification.userId), false);
+  });
+});
+
+test('a PM can remove the assignee from an existing task', async () => {
+  const { pm, task } = fixture();
+  const token = signToken(pm);
+  await withServer(async (baseUrl) => {
+    const result = await patchTask(baseUrl, token, { assigneeId: null });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.task.assigneeId, null);
+    assert.equal(result.body.conflict, null);
+    assert.equal(result.body.risk, null);
+    assert.equal(db.tasks.byId(task.id).assigneeId, null);
+  });
+});
 
 test('an async authorization error returns 403 without terminating the server', async () => {
   const { outsider } = fixture();

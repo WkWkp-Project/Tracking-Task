@@ -25,7 +25,7 @@ export default function NewTaskModal({ open, onClose, project, users, currentUse
         title: '',
         description: '',
         pmId: project?.pmId || pms[0]?.id || currentUser.id,
-        assigneeId: assignees[0]?.id || '',
+        assigneeId: '',
         startDate: todayStr(),
         endDate: plus(7),
         priority: 'normal',
@@ -80,6 +80,7 @@ export default function NewTaskModal({ open, onClose, project, users, currentUse
       const { task, calendarWarning } = await api.createTask({
         projectId: project.id,
         ...form,
+        assigneeId: form.assigneeId || null,
         drafts: drafts.map((d) => ({ step: d.step, estDays: Number(d.estDays) || 0, estHours: Number(d.estHours) || 0, dueDate: d.dueDate || null })),
       });
       onCreated?.(task, calendarWarning);
@@ -127,8 +128,8 @@ export default function NewTaskModal({ open, onClose, project, users, currentUse
               </div>
               <div>
                 <label className="block text-[11px] font-bold text-indigo-600 uppercase mb-1">ผู้ทำงาน (Creative/Content)</label>
-                <select value={form.assigneeId} onChange={(e) => setForm({ ...form, assigneeId: e.target.value })} required className="w-full p-2 border border-gray-300 rounded-lg text-sm">
-                  <option value="">เลือก…</option>
+                <select value={form.assigneeId} onChange={(e) => setForm({ ...form, assigneeId: e.target.value })} className="w-full p-2 border border-gray-300 rounded-lg text-sm">
+                  <option value="">ยังไม่มอบหมาย</option>
                   {assignees.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </select>
               </div>
@@ -189,8 +190,10 @@ export default function NewTaskModal({ open, onClose, project, users, currentUse
           {/* right: live risk/conflict preview */}
           <div className="p-5 bg-gray-50">
             <h3 className="text-xs font-bold text-gray-500 uppercase mb-3">การประเมินความเสี่ยง (สด)</h3>
-            {!preview || !risk || !conflict ? (
-              <p className="text-xs text-gray-400">เลือกผู้ทำงาน + วันที่ + ชั่วโมง เพื่อดูการวิเคราะห์</p>
+            {!form.assigneeId ? (
+              <p className="text-xs text-gray-400">สร้างงานไว้ก่อนได้ ระบบจะประเมินความเสี่ยงหลังมอบหมายผู้ทำงาน</p>
+            ) : !preview || !risk || !conflict ? (
+              <p className="text-xs text-gray-400">ระบุวันที่และชั่วโมงเพื่อดูการวิเคราะห์</p>
             ) : (
               <div className="space-y-3">
                 <div className={`p-3 rounded-lg border ${rs.chip} border-current/20`}>
@@ -233,7 +236,7 @@ export default function NewTaskModal({ open, onClose, project, users, currentUse
 
         <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3 bg-white sticky bottom-0">
           <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-bold text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">ยกเลิก</button>
-          <button type="submit" disabled={busy || !form.assigneeId || !project?.id} className="px-5 py-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-60 shadow-sm">
+          <button type="submit" disabled={busy || !project?.id} className="px-5 py-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-60 shadow-sm">
             {busy ? 'กำลังสร้าง…' : 'สร้างงาน'}
           </button>
         </div>
