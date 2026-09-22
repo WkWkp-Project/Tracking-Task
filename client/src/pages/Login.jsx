@@ -18,8 +18,8 @@ function GoogleMark() {
 export default function Login() {
   const { user, login } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState('admin@wkwkp.com');
-  const [password, setPassword] = useState('admin1234');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [google, setGoogle] = useState({ loading: true, configured: false, allowedDomain: null });
@@ -138,12 +138,6 @@ export default function Login() {
             </div>
           )}
 
-          <div className="rounded-lg border border-gray-100 bg-gray-50 p-3 text-[11px] text-gray-400">
-            <p className="mb-1 font-bold text-gray-500">บัญชีทดสอบ</p>
-            admin@wkwkp.com / admin1234 (แอดมิน)<br />
-            jira.pm@wkwkp.com / password123 (PM)<br />
-            art.a@wkwkp.com / password123 (Creative)
-          </div>
         </form>
       </div>
     </div>
