@@ -189,7 +189,7 @@ export default function NewTaskModal({ open, onClose, project, users, currentUse
           {/* right: live risk/conflict preview */}
           <div className="p-5 bg-gray-50">
             <h3 className="text-xs font-bold text-gray-500 uppercase mb-3">การประเมินความเสี่ยง (สด)</h3>
-            {!preview ? (
+            {!preview || !risk || !conflict ? (
               <p className="text-xs text-gray-400">เลือกผู้ทำงาน + วันที่ + ชั่วโมง เพื่อดูการวิเคราะห์</p>
             ) : (
               <div className="space-y-3">

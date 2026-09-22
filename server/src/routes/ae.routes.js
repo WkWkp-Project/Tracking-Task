@@ -18,6 +18,13 @@ const today = () => new Date().toISOString().slice(0, 10);
 const plus = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const estFromManHour = (mh) => (mh === '<0.5' ? 0.5 : Number(mh) || 0);
 const isActiveAe = (user) => !!user && !user.disabled && user.role === 'ae';
+// The AE board is a shared coordination sheet, but only AE/PM/admin may edit it —
+// creative/copywriter/video workers can view but not mutate rows.
+const canEditAeBoard = (user) => ['ae', 'pm', 'admin'].includes(user?.role);
+const requireAeEditor = (req, res) => {
+  if (!canEditAeBoard(req.user)) { res.status(403).json({ error: 'เฉพาะทีม AE, PM หรือแอดมินเท่านั้นที่แก้ตารางงาน AE ได้' }); return false; }
+  return true;
+};
 
 // List (optionally filter by inChargeId), newest assign first
 router.get('/', (req, res) => {
@@ -29,6 +36,7 @@ router.get('/', (req, res) => {
 });
 
 router.post('/', (req, res) => {
+  if (!requireAeEditor(req, res)) return;
   const b = req.body || {};
   const project = (b.project || '').trim();
   const workDetails = (b.workDetails || '').trim();
@@ -66,6 +74,7 @@ router.post('/', (req, res) => {
 });
 
 router.patch('/:id', (req, res) => {
+  if (!requireAeEditor(req, res)) return;
   const row = db.aeTasks.byId(req.params.id);
   if (!row) return res.status(404).json({ error: 'not found' });
   const b = req.body || {};
@@ -89,6 +98,7 @@ router.patch('/:id', (req, res) => {
 });
 
 router.delete('/:id', (req, res) => {
+  if (!requireAeEditor(req, res)) return;
   const ok = db.aeTasks.remove(req.params.id);
   if (!ok) return res.status(404).json({ error: 'not found' });
   res.json({ ok: true });

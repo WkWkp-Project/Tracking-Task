@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Clock, RefreshCw } from 'lucide-react';
 import api from '../../api/client.js';
 import { Avatar, Spinner } from '../ui.jsx';
@@ -9,12 +9,12 @@ import BrandProjectCards from './BrandProjectCards.jsx';
 const AE_BAR = { not_started: 'bg-gray-300', in_progress: 'bg-violet-400', waiting_client: 'bg-amber-400', waiting_internal: 'bg-amber-400', done: 'bg-emerald-400' };
 const DUE_BAR = { danger: 'bg-red-500', warn: 'bg-amber-400', ok: 'bg-emerald-400', done: 'bg-gray-300', none: 'bg-gray-200' };
 
-export default function AEDashboard({ users, projects, brands, onOpenBrand, onManageBrands, onOpenAeBoard }) {
+export default function AEDashboard({ users, projects, brands, refreshKey, onOpenBrand, onManageBrands, onOpenAeBoard }) {
   const [aeRows, setAeRows] = useState(null);
   const [loadedAt, setLoadedAt] = useState(null);
   const [error, setError] = useState('');
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setError('');
     try {
       const { tasks: ae } = await api.aeTasks();
@@ -23,8 +23,8 @@ export default function AEDashboard({ users, projects, brands, onOpenBrand, onMa
     } catch (err) {
       setError(err.message || 'Unable to load AE dashboard');
     }
-  };
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   const aePeople = useMemo(() => (users || []).filter((u) => u.role === 'ae'), [users]);
 
@@ -126,6 +126,7 @@ export default function AEDashboard({ users, projects, brands, onOpenBrand, onMa
         mode="ae"
         projects={projects}
         brands={brands}
+        refreshKey={refreshKey}
         onOpenBrand={onOpenBrand}
         onManageBrands={onManageBrands}
         onNewProject={onOpenAeBoard}

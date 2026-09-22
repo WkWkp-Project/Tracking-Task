@@ -234,24 +234,34 @@ export default function TaskDrawer({ taskId, users, project, projects, googleSta
 
         {/* tabs */}
         <div className="flex border-b border-gray-200 dark:border-zinc-800 px-5 sticky top-0 bg-white dark:bg-zinc-950 z-10">
-          {[['pipeline', 'ดราฟ & ชั่วโมง'], ['briefs', 'ไฟล์/Brief'], ['client', 'อีเมลลูกค้า']].map(([k, l]) => (
+          {[['pipeline', 'ดราฟ & ชั่วโมง'], ['updates', 'โน้ต/คอมเมนต์'], ['briefs', 'ไฟล์/Brief'], ['client', 'อีเมลลูกค้า']].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)} className={`py-2.5 px-3 text-sm font-bold border-b-2 ${tab === k ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500'}`}>{l}</button>
           ))}
         </div>
 
         <div className="p-5">
           {tab === 'pipeline' && <Pipeline task={task} phases={risk?.phases || []} canManage={canManage} onReload={() => { load(); onChanged?.(); }} />}
+          {tab === 'updates' && <TaskUpdates task={task} />}
           {tab === 'briefs' && <Briefs task={task} onReload={load} />}
           {tab === 'client' && <ClientEmail task={task} project={taskProject} pm={pm} assignee={assignee} googleStatus={googleStatus} />}
         </div>
       </div>
 
       <div className="p-3 border-t border-gray-100 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-900 flex gap-2">
-        <button onClick={() => { if (confirm('ลบงานนี้?')) api.deleteTask(task.id).then(() => { onChanged?.(); onClose(); }); }}
+        <button onClick={async () => {
+            if (!confirm('ลบงานนี้?')) return;
+            try { await api.deleteTask(task.id); onChanged?.(); onClose(); }
+            catch (e) { alert(e.message || 'ลบงานไม่สำเร็จ'); }
+          }}
           className="px-3 py-2 text-xs font-bold text-red-600 border border-red-200 rounded-lg hover:bg-red-50 flex items-center gap-1">
           <Trash2 size={14} /> ลบงาน
         </button>
-        <button onClick={() => task.syncCalendar ? api.calendarUnsync(task.id).then(load) : api.calendarSync(task.id).then(load).catch((e) => alert(e.message))}
+        <button onClick={async () => {
+            try {
+              await (task.syncCalendar ? api.calendarUnsync(task.id) : api.calendarSync(task.id));
+              load();
+            } catch (e) { alert(e.message || 'ปรับ Calendar ไม่สำเร็จ'); }
+          }}
           className="flex-1 px-3 py-2 text-xs font-bold text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 flex items-center justify-center gap-1">
           <CalendarDays size={14} /> {task.syncCalendar ? 'ยกเลิก Calendar' : 'Sync Calendar'}
         </button>

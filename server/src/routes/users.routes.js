@@ -55,8 +55,27 @@ router.patch('/:id', requireAdmin, async (req, res) => {
 router.delete('/:id', requireAdmin, (req, res) => {
   if (req.params.id === req.user.id)
     return res.status(400).json({ error: 'You cannot delete yourself' });
-  const ok = db.users.remove(req.params.id);
-  if (!ok) return res.status(404).json({ error: 'not found' });
+  const target = db.users.byId(req.params.id);
+  if (!target) return res.status(404).json({ error: 'not found' });
+
+  // A hard delete would leave the id dangling as task.assigneeId/pmId,
+  // project.pmId, or aeTask.inChargeId — breaking workload/risk and orphaning
+  // work. Block it and steer to "disable" (soft) when the user still owns work.
+  const stillOwnsWork =
+    db.tasks.findOne((t) => t.assigneeId === target.id || t.pmId === target.id) ||
+    db.projects.findOne((p) => p.pmId === target.id) ||
+    db.aeTasks.findOne((t) => t.inChargeId === target.id);
+  if (stillOwnsWork)
+    return res.status(409).json({
+      error: 'ลบไม่ได้ — ผู้ใช้นี้ยังมีงาน/โปรเจกต์ที่รับผิดชอบอยู่ กรุณาย้ายงานออกก่อน หรือใช้ "ปิดการใช้งาน" แทน',
+    });
+
+  // Safe to remove: also drop them from any chat groups so memberIds has no ghosts.
+  db.groups.all().forEach((g) => {
+    if (g.memberIds?.includes(target.id))
+      db.groups.update(g.id, { memberIds: g.memberIds.filter((uid) => uid !== target.id) });
+  });
+  db.users.remove(target.id);
   res.json({ ok: true });
 });
 

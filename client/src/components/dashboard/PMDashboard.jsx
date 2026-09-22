@@ -46,7 +46,7 @@ const signalTone = {
   normal: 'bg-gray-50 dark:bg-zinc-800 text-gray-500 dark:text-zinc-300 border-gray-200 dark:border-zinc-700',
 };
 
-export default function PMDashboard({ users, projects, onOpenTask, onOpenProject, onManageBrands, onNewProject }) {
+export default function PMDashboard({ users, projects, refreshKey, onOpenTask, onOpenProject, onManageBrands, onNewProject }) {
   const [tasks, setTasks] = useState(null);
   const [loadedAt, setLoadedAt] = useState(null);
   const [error, setError] = useState('');
@@ -61,7 +61,9 @@ export default function PMDashboard({ users, projects, onOpenTask, onOpenProject
       setError(err.message || 'Unable to load PM dashboard');
     }
   }, []);
-  useEffect(() => { load(); }, [load]);
+  // Reload on mount and whenever refreshKey bumps (a task was edited/deleted
+  // from the drawer, a project changed, etc.) so metrics never go stale.
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   const model = useMemo(() => {
     if (!tasks) return null;
@@ -179,6 +181,7 @@ export default function PMDashboard({ users, projects, onOpenTask, onOpenProject
       <BrandProjectCards
         mode="pm"
         projects={projects}
+        refreshKey={refreshKey}
         onOpenProject={onOpenProject}
         onManageBrands={onManageBrands}
         onNewProject={onNewProject}

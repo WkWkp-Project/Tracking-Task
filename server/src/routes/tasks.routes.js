@@ -5,6 +5,7 @@ import { requireAuth } from '../auth/jwt.js';
 import { detectConflicts, assessRisk } from '../services/riskEngine.js';
 import { notify, notifyMany } from '../services/notify.js';
 import { upsertTaskEvent, deleteTaskEvent } from '../services/calendar.js';
+import { deleteTaskCascade, removeTaskCalendarEvent } from '../services/cascade.js';
 import { reconcileDraftDueDates } from '../services/taskSchedule.js';
 import {
   TASK_STATUSES,
@@ -45,13 +46,18 @@ export function draftEffortHours(dr) {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+// Always recompute (even with zero drafts) so estimates/logged reset correctly
+// when the last draft is removed. loggedHours = draft-attributed hours (which
+// include seeded values) + task-level logs that carry no draftId — so hours
+// logged without picking a draft are no longer silently dropped.
 function recomputeHours(task) {
-  const drafts = db.drafts.find((dr) => dr.taskId === task.id).sort((a, b) => a.order - b.order);
-  if (drafts.length) {
-    const est = drafts.reduce((s, dr) => s + draftEffortHours(dr), 0);
-    const logged = drafts.reduce((s, dr) => s + (Number(dr.loggedHours) || 0), 0);
-    db.tasks.update(task.id, { estimatedHours: est, loggedHours: logged });
-  }
+  const drafts = db.drafts.find((dr) => dr.taskId === task.id);
+  const est = drafts.reduce((s, dr) => s + draftEffortHours(dr), 0);
+  const draftLogged = drafts.reduce((s, dr) => s + (Number(dr.loggedHours) || 0), 0);
+  const looseLogged = db.timeLogs
+    .find((e) => e.taskId === task.id && !e.draftId)
+    .reduce((s, e) => s + (Number(e.hours) || 0), 0);
+  db.tasks.update(task.id, { estimatedHours: est, loggedHours: draftLogged + looseLogged });
   return db.tasks.byId(task.id);
 }
 
@@ -428,11 +434,8 @@ router.delete('/:id', async (req, res) => {
   const task = db.tasks.byId(req.params.id);
   if (!task) return res.status(404).json({ error: 'not found' });
   requireTaskManager(req, task);
-  if (task.calendarEventId) { try { await deleteTaskEvent(req.user, task.calendarEventId); } catch {} }
-  db.drafts.removeWhere((dr) => dr.taskId === task.id);
-  db.attachments.removeWhere((a) => a.taskId === task.id);
-  db.taskUpdates.removeWhere((entry) => entry.taskId === task.id);
-  db.tasks.remove(task.id);
+  await removeTaskCalendarEvent(req.user, task);
+  deleteTaskCascade(task.id);
   res.json({ ok: true });
 });
 

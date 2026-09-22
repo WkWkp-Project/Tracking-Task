@@ -31,8 +31,11 @@ function PillSelect({ value, onChange, options, className = '' }) {
   );
 }
 
-export default function AEBoard({ users, currentUser, initialProject = null }) {
+export default function AEBoard({ users, currentUser, initialProject = null, onChanged }) {
   const aePeople = useMemo(() => users.filter((u) => u.role === 'ae'), [users]);
+  // Server enforces this too (403); the client gate just avoids showing edit
+  // controls that would fail. Workers can view the board but not change it.
+  const canEdit = ['ae', 'pm', 'admin'].includes(currentUser?.role);
   const [rows, setRows] = useState(null);
   const [brands, setBrands] = useState([]);
   const [filter, setFilter] = useState('all');
@@ -64,13 +67,15 @@ export default function AEBoard({ users, currentUser, initialProject = null }) {
 
   // optimistic patch
   const patch = async (id, p) => {
+    if (!canEdit) return;
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...p } : r)));
-    try { await api.updateAeTask(id, p); } catch { load(); }
+    try { await api.updateAeTask(id, p); onChanged?.(); } catch { load(); }
   };
   const removeRow = async (id) => {
+    if (!canEdit) return;
     if (!confirm('ลบงานนี้?')) return;
     setRows((rs) => rs.filter((r) => r.id !== id));
-    try { await api.deleteAeTask(id); } catch { load(); }
+    try { await api.deleteAeTask(id); onChanged?.(); } catch { load(); }
   };
 
   return (
@@ -96,9 +101,11 @@ export default function AEBoard({ users, currentUser, initialProject = null }) {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-400 tabular-nums">{filtered.length} งาน</span>
-          <button onClick={() => setShowNewTask(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-1.5 shadow-sm">
-            <Plus size={16} /> เพิ่มงาน
-          </button>
+          {canEdit && (
+            <button onClick={() => setShowNewTask(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-1.5 shadow-sm">
+              <Plus size={16} /> เพิ่มงาน
+            </button>
+          )}
         </div>
       </div>
 
@@ -172,7 +179,7 @@ export default function AEBoard({ users, currentUser, initialProject = null }) {
                       <PillSelect value={r.manHour} onChange={(e) => patch(r.id, { manHour: e.target.value })} options={AE_MANHOUR} className="bg-gray-100 text-gray-700" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input type="number" step="0.5" min="0" value={r.estWorkday} onChange={(e) => patch(r.id, { estWorkday: e.target.value })}
+                      <input type="number" step="0.5" min="0" value={r.estWorkday ?? ''} onChange={(e) => patch(r.id, { estWorkday: e.target.value })}
                         className={`${FIELD} w-16 text-center tabular-nums`} />
                     </td>
 
@@ -189,10 +196,12 @@ export default function AEBoard({ users, currentUser, initialProject = null }) {
                     </td>
 
                     <td className="px-1 py-1.5">
-                      <button onClick={() => removeRow(r.id)} title="ลบ"
-                        className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-md transition">
-                        <Trash2 size={15} />
-                      </button>
+                      {canEdit && (
+                        <button onClick={() => removeRow(r.id)} title="ลบ"
+                          className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-md transition">
+                          <Trash2 size={15} />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -224,7 +233,7 @@ export default function AEBoard({ users, currentUser, initialProject = null }) {
         presetInChargeId={filter !== 'all' ? filter : null}
         presetProject={projectFilter}
         existingProjects={projectOptions}
-        onCreated={(task) => { setRows((rs) => [task, ...(rs || [])]); loadBrands(); }}
+        onCreated={(task) => { setRows((rs) => [task, ...(rs || [])]); loadBrands(); onChanged?.(); }}
       />
     </div>
   );

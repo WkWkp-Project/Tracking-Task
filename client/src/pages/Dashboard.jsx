@@ -142,6 +142,10 @@ export default function Dashboard() {
     setShowNewTask(true);
   };
 
+  // Reload core lists AND bump the board signal so every data view (PM/AE
+  // dashboards, brand cards, calendars) refreshes after a core mutation.
+  const refreshAll = async () => { await loadCore(); setBoardVersion((v) => v + 1); };
+
   const createProject = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
@@ -149,7 +153,7 @@ export default function Dashboard() {
     const { project } = await api.createProject({
       brand, name: f.get('name'), clientEmail: f.get('clientEmail'), pmId: f.get('pmId') || user.id,
     });
-    await loadCore();
+    await refreshAll();
     openProjectWorkspace(project);
     setShowNewProject(false);
   };
@@ -284,6 +288,7 @@ export default function Dashboard() {
               <PMDashboard
                 users={users}
                 projects={projects}
+                refreshKey={boardVersion}
                 onOpenTask={(id) => handleNavigate({ type: 'task', id })}
                 onOpenProject={openProjectWorkspace}
                 onManageBrands={() => setShowBrands(true)}
@@ -294,6 +299,7 @@ export default function Dashboard() {
                 users={users}
                 projects={projects}
                 brands={brands}
+                refreshKey={boardVersion}
                 onOpenBrand={(brand) => { setAeBrandFilter(brand); setView('ae'); }}
                 onManageBrands={() => setShowBrands(true)}
                 onOpenAeBoard={() => { setAeBrandFilter(null); setView('ae'); }}
@@ -311,9 +317,9 @@ export default function Dashboard() {
             ) : view === 'calendar' ? (
               <CalendarView projects={projects} onOpenTask={(id) => handleNavigate({ type: 'task', id })} refreshKey={boardVersion} />
             ) : view === 'calendar-ae' ? (
-              <AECalendarView users={users} onOpenAeBoard={() => setView('ae')} />
+              <AECalendarView users={users} refreshKey={boardVersion} onOpenAeBoard={() => setView('ae')} />
             ) : view === 'ae' ? (
-              <AEBoard users={users} currentUser={user} initialProject={aeBrandFilter} />
+              <AEBoard users={users} currentUser={user} initialProject={aeBrandFilter} onChanged={() => setBoardVersion((v) => v + 1)} />
             ) : (
               <ProjectTimeline
                 project={selected}
@@ -347,12 +353,12 @@ export default function Dashboard() {
       </div>
 
       {/* MODALS */}
-      <TeamModal open={showTeam} onClose={() => setShowTeam(false)} onChanged={loadCore} />
-      <BrandsModal open={showBrands} onClose={() => setShowBrands(false)} brands={brands} onChanged={loadCore} />
+      <TeamModal open={showTeam} onClose={() => setShowTeam(false)} onChanged={refreshAll} />
+      <BrandsModal open={showBrands} onClose={() => setShowBrands(false)} brands={brands} onChanged={refreshAll} />
       <ProjectModal
         open={showEditProject} project={selected} users={users}
         onClose={() => setShowEditProject(false)}
-        onSaved={(updated) => { setSelected(updated); loadCore(); }}
+        onSaved={(updated) => { setSelected(updated); refreshAll(); }}
       />
       {newTaskProject && (
         <NewTaskModal

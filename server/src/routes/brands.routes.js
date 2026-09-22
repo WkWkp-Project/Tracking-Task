@@ -78,8 +78,17 @@ router.patch('/:id', requireAdmin, (req, res) => {
 });
 
 router.delete('/:id', requireAdmin, (req, res) => {
-  const ok = db.brands.remove(req.params.id);
-  if (!ok) return res.status(404).json({ error: 'not found' });
+  const brand = db.brands.byId(req.params.id);
+  if (!brand) return res.status(404).json({ error: 'not found' });
+  // A brand still used by a project or AE row can't be deleted — the auto-sync
+  // on the next list load would recreate it with a fresh id (losing logo/history).
+  // Rename or clear those references first.
+  const key = brand.name.trim().toLowerCase();
+  const usedByProject = db.projects.findOne((p) => (p.brand || '').trim().toLowerCase() === key);
+  const usedByAe = db.aeTasks.findOne((t) => (t.project || '').trim().toLowerCase() === key);
+  if (usedByProject || usedByAe)
+    return res.status(409).json({ error: 'ลบไม่ได้ — แบรนด์นี้ยังถูกใช้ในโปรเจกต์หรือตารางงาน AE อยู่' });
+  db.brands.remove(brand.id);
   res.json({ ok: true });
 });
 

@@ -18,6 +18,7 @@ export default function BrandProjectCards({
   mode = 'pm',
   projects = [],
   brands = [],
+  refreshKey,
   onOpenProject,
   onOpenBrand,
   onManageBrands,
@@ -25,6 +26,8 @@ export default function BrandProjectCards({
 }) {
   const [tasks, setTasks] = useState([]);
 
+  // Depend on refreshKey (not just projects.length) so status/risk changes and
+  // new tasks on existing projects — which don't change the count — still refresh.
   useEffect(() => {
     let active = true;
     const request = mode === 'ae' ? api.aeTasks() : api.tasks();
@@ -32,7 +35,7 @@ export default function BrandProjectCards({
       .then(({ tasks: rows }) => { if (active) setTasks(rows || []); })
       .catch(() => { if (active) setTasks([]); });
     return () => { active = false; };
-  }, [mode, projects.length]);
+  }, [mode, projects.length, refreshKey]);
 
   const groups = useMemo(() => {
     if (mode === 'ae') {

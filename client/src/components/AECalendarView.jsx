@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import api from '../api/client.js';
 import { Avatar } from './ui.jsx';
@@ -9,19 +9,20 @@ const CHIP_TINT = { danger: 'bg-red-100 text-red-700', warn: 'bg-amber-100 text-
 
 // Built-in calendar for AE work — separate from the PM/project calendar so
 // AE due dates don't get crowded together with PM task bars on the same days.
-export default function AECalendarView({ users, onOpenAeBoard }) {
+export default function AECalendarView({ users, refreshKey, onOpenAeBoard }) {
   const now = new Date();
   const [cursor, setCursor] = useState({ y: now.getFullYear(), m: now.getMonth() });
   const [rows, setRows] = useState(null);
   const [filter, setFilter] = useState('all');
+  const [expandedDay, setExpandedDay] = useState(null); // day key showing all items
 
   const aePeople = useMemo(() => (users || []).filter((u) => u.role === 'ae'), [users]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const { tasks } = await api.aeTasks();
     setRows(tasks);
-  };
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   const grid = useMemo(() => monthGrid(cursor.y, cursor.m), [cursor]);
   const tKey = todayKey();
@@ -99,7 +100,7 @@ export default function AECalendarView({ users, onOpenAeBoard }) {
               </div>
               {items.length > 0 && (
                 <div className="mt-1 space-y-0.5">
-                  {items.slice(0, 3).map((r) => {
+                  {(expandedDay === cell.key ? items : items.slice(0, 3)).map((r) => {
                     const sev = dueSeverity(r.dueDate, r.status);
                     const person = personById(r.inChargeId);
                     return (
@@ -110,7 +111,12 @@ export default function AECalendarView({ users, onOpenAeBoard }) {
                       </button>
                     );
                   })}
-                  {items.length > 3 && <div className="text-[9px] text-gray-400">+{items.length - 3} อื่นๆ</div>}
+                  {items.length > 3 && (
+                    <button onClick={() => setExpandedDay(expandedDay === cell.key ? null : cell.key)}
+                      className="text-[9px] font-bold text-blue-500 hover:underline">
+                      {expandedDay === cell.key ? 'ย่อ' : `+${items.length - 3} อื่นๆ`}
+                    </button>
+                  )}
                 </div>
               )}
             </div>

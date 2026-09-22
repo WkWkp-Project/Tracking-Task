@@ -158,6 +158,9 @@ router.post('/change-password', requireAuth, async (req, res) => {
 router.post('/set-role', requireAuth, (req, res) => {
   const { role } = req.body || {};
   if (!SELF_ROLES.includes(role)) return res.status(400).json({ error: 'invalid role' });
+  // One-time onboarding gate only. Once a role is confirmed, changing it is an
+  // admin action (PATCH /users/:id) — otherwise any worker could self-promote to PM.
+  if (req.user.roleConfirmed) return res.status(403).json({ error: 'บทบาทถูกยืนยันแล้ว ให้แอดมินเปลี่ยนให้เท่านั้น' });
   db.users.update(req.user.id, { role, roleConfirmed: true });
   const updated = db.users.byId(req.user.id);
   res.json({ token: signToken(updated), user: publicUser(updated) });

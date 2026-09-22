@@ -13,6 +13,7 @@ export default function CalendarView({ projects, onOpenTask, defaultAssigneeId, 
   const [selectedId, setSelectedId] = useState(defaultAssigneeId || null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [expandedDay, setExpandedDay] = useState(null); // day key showing all tasks
 
   const grid = useMemo(() => monthGrid(cursor.y, cursor.m), [cursor]);
 
@@ -124,13 +125,18 @@ export default function CalendarView({ projects, onOpenTask, defaultAssigneeId, 
                   {info && (
                     <div className="mt-1 space-y-0.5">
                       {info.over && <div className="flex items-center gap-0.5 text-[9px] font-bold text-red-600"><AlertTriangle size={9} /> ชน</div>}
-                      {info.tasks.slice(0, 3).map((t) => (
+                      {(expandedDay === cell.key ? info.tasks : info.tasks.slice(0, 3)).map((t) => (
                         <button key={t.taskId} onClick={() => onOpenTask(t.taskId)} title={`${t.title} • ${t.hours}h`}
                           className="w-full text-left text-[9px] font-medium text-gray-700 dark:text-zinc-200 truncate px-1.5 py-1 rounded-md bg-white/90 dark:bg-zinc-900/90 border border-gray-200 dark:border-zinc-700 hover:bg-blue-50 dark:hover:bg-blue-950/50">
                           {t.title}
                         </button>
                       ))}
-                      {info.tasks.length > 3 && <div className="text-[9px] text-gray-400">+{info.tasks.length - 3} อื่นๆ</div>}
+                      {info.tasks.length > 3 && (
+                        <button onClick={() => setExpandedDay(expandedDay === cell.key ? null : cell.key)}
+                          className="text-[9px] font-bold text-blue-500 hover:underline">
+                          {expandedDay === cell.key ? 'ย่อ' : `+${info.tasks.length - 3} อื่นๆ`}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

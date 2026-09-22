@@ -141,15 +141,24 @@ export default function ChatPanel({ open, onClose, presetUserId, users = [], onO
     const channelType = active.type === 'group' ? 'group' : 'dm';
     const channelKey = activeKey();
     const payload = { channelType, channelKey, body, taskId: pendingTaskId || null, attachment: pendingAttachment || null };
+    // Snapshot the composer so we can restore it if delivery fails, instead of
+    // clearing first and losing the message when the REST fallback rejects.
+    const snapshot = { text, pendingTaskId, pendingAttachment };
     setText(''); setPendingTaskId(null); setPendingAttachment(null);
     const socket = getSocket();
     if (socket?.connected) {
       socket.emit('chat:send', payload, (ack) => {
         if (ack?.message) setMessages((prev) => (prev.some((m) => m.id === ack.message.id) ? prev : [...prev, ack.message]));
+        else if (ack?.error) { setText(snapshot.text); setPendingTaskId(snapshot.pendingTaskId); setPendingAttachment(snapshot.pendingAttachment); alert(ack.error); }
       });
     } else {
-      const { message } = await api.sendMessage({ ...payload, to: active.type === 'dm' ? active.user.id : undefined });
-      setMessages((prev) => [...prev, message]);
+      try {
+        const { message } = await api.sendMessage({ ...payload, to: active.type === 'dm' ? active.user.id : undefined });
+        setMessages((prev) => [...prev, message]);
+      } catch (err) {
+        setText(snapshot.text); setPendingTaskId(snapshot.pendingTaskId); setPendingAttachment(snapshot.pendingAttachment);
+        alert(err.message || 'ส่งข้อความไม่สำเร็จ');
+      }
     }
   };
 
