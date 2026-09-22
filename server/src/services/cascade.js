@@ -4,7 +4,7 @@
 // project-delete cleaned up different subsets and left orphans behind.
 
 import db from '../db.js';
-import { deleteTaskEvent } from './calendar.js';
+import { calendarOwnerForTask, deleteTaskEvent } from './calendar.js';
 
 // Remove everything owned by a task: its drafts, attachments, notes/updates,
 // and time logs. Chat messages that merely *tag* the task are left intact —
@@ -17,9 +17,11 @@ export function deleteTaskCascade(taskId) {
   db.tasks.remove(taskId);
 }
 
-// Best-effort calendar event removal for a task (needs the acting user's
-// Google credentials). Never throws — calendar sync is optional.
+// Remove a task's remote event with the Google account that created it. A
+// failure is surfaced so callers do not delete local ownership metadata while
+// leaving an unreachable event behind in Google Calendar.
 export async function removeTaskCalendarEvent(actingUser, task) {
   if (!task?.calendarEventId) return;
-  try { await deleteTaskEvent(actingUser, task.calendarEventId); } catch { /* optional */ }
+  const owner = calendarOwnerForTask(task, actingUser, (id) => db.users.byId(id));
+  await deleteTaskEvent(owner, task.calendarEventId);
 }

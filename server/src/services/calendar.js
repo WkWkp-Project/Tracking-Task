@@ -18,6 +18,15 @@ function calendarFor(user) {
   return google.calendar({ version: 'v3', auth });
 }
 
+export function calendarOwnerForTask(task, actingUser, findUser) {
+  if (!task?.calendarEventId || !task.calendarOwnerId) return actingUser;
+  const owner = findUser(task.calendarOwnerId);
+  if (owner && !owner.disabled) return owner;
+  const error = new Error('The Google account that owns this calendar event is unavailable.');
+  error.code = 'CALENDAR_OWNER_UNAVAILABLE';
+  throw error;
+}
+
 // All-day event spanning the task window. Calendar end date is exclusive.
 function eventBody(task, attendees = []) {
   const end = new Date(`${task.endDate}T00:00:00Z`);

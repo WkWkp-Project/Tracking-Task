@@ -110,12 +110,16 @@ export function pert(task) {
 
 // ── Build a per-day workload calendar for one user ──────────────────────────
 // Returns { 'YYYY-MM-DD': { load, capacity, tasks: [{taskId,title,hours}] } }
-export function buildWorkload(user, tasks) {
+export function buildWorkload(user, tasks, { fromDate = null } = {}) {
   const cap = capacityFor(user);
   const calendar = {};
   for (const task of tasks) {
     if (!isActive(task)) continue;
-    const days = workdaysBetween(task.startDate, task.endDate);
+    const effectiveStart = fromDate && fromDate > task.startDate ? fromDate : task.startDate;
+    let days = workdaysBetween(effectiveStart, task.endDate);
+    // Unfinished overdue work is backlog, not free capacity. Charge its full
+    // remaining effort to today so new work cannot silently displace it.
+    if (fromDate && task.endDate < fromDate && isWorkday(d(fromDate))) days = [fromDate];
     if (days.length === 0) continue;
     const perDay = remainingHours(task) / days.length;
     if (perDay <= 0) continue;
@@ -131,12 +135,12 @@ export function buildWorkload(user, tasks) {
 // ── Conflict detection ──────────────────────────────────────────────────────
 // Given a person's existing tasks + a candidate (new/edited) task, return the
 // days where total demand exceeds capacity, plus the tasks contributing.
-export function detectConflicts(user, existingTasks, candidateTask) {
+export function detectConflicts(user, existingTasks, candidateTask, now = new Date()) {
   const cap = capacityFor(user);
   const all = candidateTask
     ? [...existingTasks.filter((t) => t.id !== candidateTask.id), candidateTask]
     : existingTasks;
-  const calendar = buildWorkload(user, all);
+  const calendar = buildWorkload(user, all, { fromDate: todayKey(now) });
 
   const overloadedDays = [];
   for (const [day, info] of Object.entries(calendar)) {
@@ -236,7 +240,7 @@ export function assessRisk(task, user, otherTasks = [], drafts = [], now = new D
     };
   }
 
-  const otherCal = buildWorkload(user, otherTasks);
+  const otherCal = buildWorkload(user, otherTasks, { fromDate: today });
   // capacity available (net of other tasks) from today up to a given deadline
   const availTo = (deadline) => {
     const wds = workdaysBetween(today > task.startDate ? today : task.startDate, deadline);

@@ -84,11 +84,60 @@ test('normal CDF is centered and monotonic', () => {
 test('conflict engine identifies shared-capacity overload', () => {
   const first = task({ id: 'a', estimatedHours: 32 });
   const second = task({ id: 'b', estimatedHours: 24 });
-  const result = detectConflicts(user, [first], second);
+  const result = detectConflicts(user, [first], second, new Date('2026-07-27T12:00:00Z'));
   assert.equal(result.hasConflict, true);
   assert.equal(result.overloadedDays.length, 5);
   assert.ok(result.peakUtilization > 1);
   assert.equal(result.overlapsWith[0].taskId, 'a');
+});
+
+test('risk capacity moves unfinished work onto the remaining workdays', () => {
+  const existing = task({
+    id: 'existing',
+    startDate: '2026-07-27',
+    endDate: '2026-07-31',
+    estimatedHours: 8,
+  });
+  const candidate = task({
+    id: 'candidate',
+    startDate: '2026-07-31',
+    endDate: '2026-07-31',
+    estimatedHours: 4,
+  });
+  const result = assessRisk(
+    candidate,
+    user,
+    [existing],
+    [],
+    new Date('2026-07-31T12:00:00Z')
+  );
+  assert.equal(result.availableHoursForTask, 0);
+  assert.equal(result.level, 'Critical');
+  assert.ok(result.onTimeProbability < 0.01);
+});
+
+test('overdue unfinished work still consumes todays capacity', () => {
+  const overdue = task({
+    id: 'overdue',
+    startDate: '2026-07-27',
+    endDate: '2026-07-30',
+    estimatedHours: 8,
+  });
+  const candidate = task({
+    id: 'candidate',
+    startDate: '2026-07-31',
+    endDate: '2026-07-31',
+    estimatedHours: 1,
+  });
+  const result = assessRisk(
+    candidate,
+    user,
+    [overdue],
+    [],
+    new Date('2026-07-31T12:00:00Z')
+  );
+  assert.equal(result.availableHoursForTask, 0);
+  assert.equal(result.level, 'Critical');
 });
 
 test('terminal and archived tasks do not consume workload capacity', () => {

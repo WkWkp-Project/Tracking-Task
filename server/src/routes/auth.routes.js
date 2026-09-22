@@ -7,6 +7,7 @@ import { config, googleConfigured } from '../config.js';
 import { signToken, publicUser, requireAuth } from '../auth/jwt.js';
 import { getAuthUrl, makeOAuthClient } from '../auth/google.js';
 import { newUser, ROLES } from '../services/users.js';
+import { asyncRoute } from '../http.js';
 
 const SELF_ROLES = ROLES.filter((role) => role !== 'admin');
 const OAUTH_STATE_COOKIE = 'tracking_google_oauth_state';
@@ -113,7 +114,7 @@ function redirectToClient(res, params, origin = config.clientOrigin) {
   return res.redirect(`${origin}/auth/callback?${query}`);
 }
 
-router.post('/login', async (req, res) => {
+router.post('/login', asyncRoute(async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'email & password required' });
   const key = loginKey(req, email);
@@ -136,13 +137,13 @@ router.post('/login', async (req, res) => {
   if (user.disabled) return res.status(403).json({ error: 'Account disabled' });
   failedLogins.delete(key);
   res.json({ token: signToken(user), user: publicUser(user) });
-});
+}));
 
 router.get('/me', requireAuth, (req, res) => {
   res.json({ user: publicUser(req.user) });
 });
 
-router.post('/change-password', requireAuth, async (req, res) => {
+router.post('/change-password', requireAuth, asyncRoute(async (req, res) => {
   const { currentPassword, newPassword } = req.body || {};
   if (!newPassword || newPassword.length < 6)
     return res.status(400).json({ error: 'New password must be at least 6 characters' });
@@ -153,7 +154,7 @@ router.post('/change-password', requireAuth, async (req, res) => {
   const passwordHash = await bcrypt.hash(newPassword, 10);
   db.users.update(req.user.id, { passwordHash });
   res.json({ ok: true });
-});
+}));
 
 router.post('/set-role', requireAuth, (req, res) => {
   const { role } = req.body || {};
@@ -184,7 +185,7 @@ router.get('/google', (req, res) => {
   res.redirect(getAuthUrl(state));
 });
 
-router.get('/google/callback', async (req, res) => {
+router.get('/google/callback', asyncRoute(async (req, res) => {
   if (!googleConfigured) return redirectToClient(res, { error: 'google_not_configured' });
   const { code, error, state } = req.query;
   pruneOAuthEntries();
@@ -255,7 +256,7 @@ router.get('/google/callback', async (req, res) => {
     console.error('[google/callback]', err.message);
     return redirectToClient(res, { error: 'oauth_failed' }, clientOrigin);
   }
-});
+}));
 
 router.post('/google/exchange', (req, res) => {
   pruneOAuthEntries();

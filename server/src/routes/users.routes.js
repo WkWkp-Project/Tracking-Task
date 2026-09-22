@@ -3,6 +3,7 @@ import db from '../db.js';
 import { requireAuth, requireAdmin, publicUser } from '../auth/jwt.js';
 import { newUser, hashPassword, ROLES } from '../services/users.js';
 import { buildWorkload, assessRisk } from '../services/riskEngine.js';
+import { asyncRoute } from '../http.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -13,7 +14,7 @@ router.get('/', (_req, res) => {
 });
 
 // Admin: create a user with id/password (manual onboarding)
-router.post('/', requireAdmin, async (req, res) => {
+router.post('/', requireAdmin, asyncRoute(async (req, res) => {
   const { name, email, role, password, capacityHoursPerDay } = req.body || {};
   if (!email) return res.status(400).json({ error: 'email required' });
   const exists = db.users.findOne((u) => u.email.toLowerCase() === String(email).toLowerCase());
@@ -27,10 +28,10 @@ router.post('/', requireAdmin, async (req, res) => {
   }
   db.users.insert(u);
   res.status(201).json({ user: publicUser(u) });
-});
+}));
 
 // Admin: update a user (role, capacity, name, disabled, reset password)
-router.patch('/:id', requireAdmin, async (req, res) => {
+router.patch('/:id', requireAdmin, asyncRoute(async (req, res) => {
   const target = db.users.byId(req.params.id);
   if (!target) return res.status(404).json({ error: 'not found' });
   const { name, role, capacityHoursPerDay, disabled, password } = req.body || {};
@@ -49,7 +50,7 @@ router.patch('/:id', requireAdmin, async (req, res) => {
   }
   db.users.update(target.id, patch);
   res.json({ user: publicUser(db.users.byId(target.id)) });
-});
+}));
 
 // Admin: delete a user
 router.delete('/:id', requireAdmin, (req, res) => {

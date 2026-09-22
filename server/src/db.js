@@ -36,14 +36,30 @@ function load() {
     fs.writeFileSync(DB_FILE, JSON.stringify(EMPTY, null, 2));
     return structuredClone(EMPTY);
   }
+  const raw = fs.readFileSync(DB_FILE, 'utf8');
+  return parseDatabase(raw, DB_FILE);
+}
+
+export function parseDatabase(raw, source = 'database') {
   try {
-    const raw = fs.readFileSync(DB_FILE, 'utf8');
     const parsed = JSON.parse(raw || '{}');
-    // make sure every collection exists even if file is from an older version
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('database root must be a JSON object');
+    }
+    for (const key of Object.keys(EMPTY)) {
+      if (key === 'meta' || parsed[key] === undefined) continue;
+      if (!Array.isArray(parsed[key])) throw new Error(`${key} must be an array`);
+    }
+    if (parsed.meta !== undefined && (!parsed.meta || typeof parsed.meta !== 'object' || Array.isArray(parsed.meta))) {
+      throw new Error('meta must be an object');
+    }
+    // Make sure every collection exists even if the file uses an older schema.
     return { ...structuredClone(EMPTY), ...parsed };
-  } catch (err) {
-    console.error('[db] failed to parse db.json, starting fresh:', err.message);
-    return structuredClone(EMPTY);
+  } catch (error) {
+    throw new Error(
+      `Refusing to start because ${source} is invalid; the original file was left untouched: ${error.message}`,
+      { cause: error }
+    );
   }
 }
 
