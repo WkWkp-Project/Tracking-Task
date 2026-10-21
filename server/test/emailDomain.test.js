@@ -25,3 +25,12 @@ test('team.wkwkp.com config accepts team staff and not the bare parent domain', 
   assert.equal(isAllowedEmailDomain('a@wkwkp.com', 'team.wkwkp.com'), false);
   assert.equal(isAllowedEmailDomain('a@evil-team.wkwkp.com', 'team.wkwkp.com'), false);
 });
+
+import { normalizeDomain } from '../src/config.js';
+
+test('configured domain tolerates a leading @, spaces and capitals', () => {
+  assert.equal(normalizeDomain('@team.wkwkp.com'), 'team.wkwkp.com');
+  assert.equal(normalizeDomain('  Team.WkWkp.com '), 'team.wkwkp.com');
+  assert.equal(normalizeDomain(undefined), '');
+  assert.equal(isAllowedEmailDomain('jarupat@team.wkwkp.com', normalizeDomain('@team.wkwkp.com')), true);
+});

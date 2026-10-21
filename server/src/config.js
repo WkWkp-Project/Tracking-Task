@@ -8,6 +8,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // `npm run dev` tree — that value is meant for the Vite client, not the API).
 dotenv.config({ path: path.join(__dirname, '..', '.env'), override: true });
 
+// Accepts "team.wkwkp.com", "@team.wkwkp.com" or " Team.WkWkp.com " — all mean
+// the same domain. Used for both the sign-in check and Google's `hd` hint.
+export function normalizeDomain(value) {
+  return String(value || '').trim().toLowerCase().replace(/^@+/, '');
+}
+
 export const config = {
   // dedicated var first, then .env PORT, then default — never inherit a
   // stray PORT meant for the client.
@@ -32,7 +38,7 @@ export const config = {
     redirectUri:
       process.env.GOOGLE_REDIRECT_URI ||
       'http://localhost:4000/api/auth/google/callback',
-    allowedDomain: process.env.ALLOWED_GOOGLE_DOMAIN || '',
+    allowedDomain: normalizeDomain(process.env.ALLOWED_GOOGLE_DOMAIN),
   },
 };
 
