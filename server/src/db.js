@@ -3,11 +3,17 @@
 // Data is written atomically to server/data/db.json on every mutation.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '..', 'data');
+// `node --test` sets NODE_TEST_CONTEXT in its child processes. Tests mutate the
+// store directly, so point them at a throwaway directory instead of letting them
+// overwrite the real server/data/db.json.
+const DATA_DIR = process.env.NODE_TEST_CONTEXT
+  ? fs.mkdtempSync(path.join(os.tmpdir(), 'tracking-task-test-'))
+  : path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 const EMPTY = {
