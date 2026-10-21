@@ -13,6 +13,16 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/calendar.events',
 ];
 
+// True when the address belongs to `allowedDomain` or one of its subdomains
+// (e.g. jarupat@team.wkwkp.com for wkwkp.com). Lookalikes such as
+// evil-wkwkp.com or wkwkp.com.evil.io are rejected.
+export function isAllowedEmailDomain(email, allowedDomain) {
+  if (!allowedDomain) return true;
+  const domain = String(email || '').toLowerCase().split('@').pop();
+  const allowed = String(allowedDomain).toLowerCase().replace(/^@/, '');
+  return domain === allowed || domain.endsWith(`.${allowed}`);
+}
+
 export function hasRequiredScopes(scopeString, needed) {
   const granted = new Set(String(scopeString || '').split(/\s+/).filter(Boolean));
   return needed.every((scope) => granted.has(scope));

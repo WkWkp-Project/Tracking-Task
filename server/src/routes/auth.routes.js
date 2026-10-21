@@ -5,7 +5,7 @@ import { google } from 'googleapis';
 import db from '../db.js';
 import { config, googleConfigured } from '../config.js';
 import { signToken, publicUser, requireAuth } from '../auth/jwt.js';
-import { getAuthUrl, makeOAuthClient } from '../auth/google.js';
+import { getAuthUrl, makeOAuthClient, isAllowedEmailDomain } from '../auth/google.js';
 import { createState, readState } from '../auth/oauthState.js';
 import { newUser, ROLES } from '../services/users.js';
 import { asyncRoute } from '../http.js';
@@ -205,7 +205,7 @@ router.get('/google/callback', asyncRoute(async (req, res) => {
     const email = (profile.email || '').toLowerCase();
     if (!email || profile.verified_email !== true)
       return redirectToClient(res, { error: 'email_not_verified' }, clientOrigin);
-    if (config.google.allowedDomain && !email.endsWith(`@${config.google.allowedDomain}`))
+    if (!isAllowedEmailDomain(email, config.google.allowedDomain))
       return redirectToClient(res, { error: 'domain_not_allowed' }, clientOrigin);
 
     let user;
