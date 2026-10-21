@@ -14,8 +14,8 @@ export const GOOGLE_SCOPES = [
 ];
 
 // True when the address belongs to `allowedDomain` or one of its subdomains
-// (e.g. jarupat@team.wkwkp.com for wkwkp.com). Lookalikes such as
-// evil-wkwkp.com or wkwkp.com.evil.io are rejected.
+// (e.g. a@team.wkwkp.com for team.wkwkp.com). Lookalikes such as
+// evil-team.wkwkp.com or team.wkwkp.com.evil.io are rejected.
 export function isAllowedEmailDomain(email, allowedDomain) {
   if (!allowedDomain) return true;
   const domain = String(email || '').toLowerCase().split('@').pop();
