@@ -14,11 +14,24 @@ export function normalizeDomain(value) {
   return String(value || '').trim().toLowerCase().replace(/^@+/, '');
 }
 
+// CLIENT_ORIGIN without a scheme ("tasks.example.com") makes res.redirect treat
+// it as a relative path and produce URLs like /api/auth/google/tasks.example.com/….
+// Add the scheme when it is missing and drop trailing slashes.
+export function normalizeOrigin(value, fallback = '') {
+  let origin = String(value || '').trim().replace(/\/+$/, '');
+  if (!origin) return fallback;
+  if (!/^https?:\/\//i.test(origin)) {
+    const local = /^(localhost|127\.0\.0\.1|\[::1\])(:|$)/i.test(origin);
+    origin = `${local ? 'http' : 'https'}://${origin}`;
+  }
+  return origin;
+}
+
 export const config = {
   // dedicated var first, then .env PORT, then default — never inherit a
   // stray PORT meant for the client.
   port: Number(process.env.SERVER_PORT || process.env.PORT) || 4000,
-  clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  clientOrigin: normalizeOrigin(process.env.CLIENT_ORIGIN, 'http://localhost:5173'),
   jwtSecret: process.env.JWT_SECRET || 'dev-insecure-secret-change-me',
   // chat messages are encrypted at rest with this key — set CHAT_ENCRYPTION_KEY
   // in production so a copy of db.json alone can't be read (even by an admin)
