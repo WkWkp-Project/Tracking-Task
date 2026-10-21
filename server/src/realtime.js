@@ -8,6 +8,7 @@ import { config } from './config.js';
 import { canAccessDmChannel, dmChannelKey } from './services/chat.js';
 import { encryptText, decryptText } from './services/crypto.js';
 import { validateChatAttachment } from './services/chatAttachments.js';
+import { notifyChatRecipients } from './services/notify.js';
 
 let io = null;
 
@@ -58,6 +59,7 @@ export function initRealtime(httpServer) {
         attachment: safeAttachment,
       });
       emitMessage(msg);
+      notifyChatRecipients(msg, db.users.byId(socket.userId)?.name || 'เพื่อนร่วมทีม');
       ack?.({ ok: true, message: msg });
     });
 
