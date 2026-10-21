@@ -1,6 +1,13 @@
 import bcrypt from 'bcryptjs';
 
-export const ROLES = ['admin', 'pm', 'creative', 'copywriter', 'video', 'ae'];
+// admin = super admin (everything, incl. user/role management).
+// pm and ae are management/coordination roles. Every other role is a
+// production worker: it can be assigned tasks and never manages projects.
+export const ROLES = [
+  'admin', 'pm', 'ae',
+  'art_director', 'graphic', 'creative', 'content_creator', 'copywriter',
+  'editor', 'video', 'director', 'producer',
+];
 
 const COLORS = ['#2563eb', '#7c3aed', '#db2777', '#ea580c', '#0d9488', '#65a30d', '#9333ea', '#0891b2'];
 

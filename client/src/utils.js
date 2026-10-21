@@ -38,15 +38,27 @@ export const ROLE_LABELS = {
   copywriter: 'Copywriter',
   video: 'Video Editor',
   ae: 'Account Executive',
+  art_director: 'Art Director',
+  graphic: 'Graphic Designer',
+  content_creator: 'Content Creator',
+  editor: 'Editor',
+  director: 'Director',
+  producer: 'Producer',
 };
 
 // roles a user may pick for themselves on first login (never 'admin')
 export const SELF_ROLE_OPTIONS = [
   { key: 'pm', label: ROLE_LABELS.pm, hint: 'ดูภาพรวมโปรเจกต์ มอบหมายงาน ติดตามความเสี่ยง' },
   { key: 'ae', label: ROLE_LABELS.ae, hint: 'ประสานงานลูกค้า ดูแลตาราง AE work' },
+  { key: 'art_director', label: ROLE_LABELS.art_director, hint: 'คุมทิศทางภาพ รับงานจาก PM ทำดราฟ ส่งงาน' },
+  { key: 'graphic', label: ROLE_LABELS.graphic, hint: 'ออกแบบกราฟิก รับงานจาก PM ทำดราฟ ส่งงาน' },
   { key: 'creative', label: ROLE_LABELS.creative, hint: 'รับงานจาก PM ทำดราฟ ส่งงาน' },
-  { key: 'copywriter', label: ROLE_LABELS.copywriter, hint: 'รับงานจาก PM ทำดราฟ ส่งงาน' },
-  { key: 'video', label: ROLE_LABELS.video, hint: 'รับงานจาก PM ทำดราฟ ส่งงาน' },
+  { key: 'content_creator', label: ROLE_LABELS.content_creator, hint: 'ทำคอนเทนต์ รับงานจาก PM ทำดราฟ ส่งงาน' },
+  { key: 'copywriter', label: ROLE_LABELS.copywriter, hint: 'เขียนคอปปี้ รับงานจาก PM ทำดราฟ ส่งงาน' },
+  { key: 'editor', label: ROLE_LABELS.editor, hint: 'ตัดต่อ รับงานจาก PM ทำดราฟ ส่งงาน' },
+  { key: 'video', label: ROLE_LABELS.video, hint: 'ตัดต่อวิดีโอ รับงานจาก PM ทำดราฟ ส่งงาน' },
+  { key: 'director', label: ROLE_LABELS.director, hint: 'กำกับงานถ่ายทำ/โปรดักชัน รับงานจาก PM' },
+  { key: 'producer', label: ROLE_LABELS.producer, hint: 'ดูแลการผลิต ประสานทีมโปรดักชัน รับงานจาก PM' },
 ];
 
 // ── AE board vocab (matches the app's semantic pill palette) ──

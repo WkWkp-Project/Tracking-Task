@@ -2,7 +2,7 @@
 // the server runs (only if the DB is empty). Safe to run repeatedly.
 
 import db from './db.js';
-import { config } from './config.js';
+import { config, isSuperAdminEmail } from './config.js';
 import { newUser, hashPassword } from './services/users.js';
 import { nanoid } from 'nanoid';
 
@@ -12,8 +12,16 @@ function todayPlus(days) {
   return d.toISOString().slice(0, 10);
 }
 
+function ensureSuperAdmins() {
+  for (const user of db.users.all()) {
+    if (isSuperAdminEmail(user.email) && (user.role !== 'admin' || !user.roleConfirmed))
+      db.users.update(user.id, { role: 'admin', roleConfirmed: true });
+  }
+}
+
 export async function ensureSeed() {
   // Always make sure an admin exists
+  ensureSuperAdmins();
   let admin = db.users.findOne((u) => u.email.toLowerCase() === config.admin.email.toLowerCase());
   if (!admin) {
     admin = newUser({ name: 'Admin', email: config.admin.email, role: 'admin', capacityHoursPerDay: 8 });

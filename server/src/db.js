@@ -13,7 +13,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // overwrite the real server/data/db.json.
 const DATA_DIR = process.env.NODE_TEST_CONTEXT
   ? fs.mkdtempSync(path.join(os.tmpdir(), 'tracking-task-test-'))
-  : path.join(__dirname, '..', 'data');
+  : process.env.DATA_DIR
+    ? path.resolve(process.env.DATA_DIR) // e.g. a Render persistent disk mount
+    : path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 const EMPTY = {

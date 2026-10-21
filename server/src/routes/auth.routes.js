@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import { google } from 'googleapis';
 import db from '../db.js';
-import { config, googleConfigured } from '../config.js';
+import { config, googleConfigured, isSuperAdminEmail } from '../config.js';
 import { signToken, publicUser, requireAuth } from '../auth/jwt.js';
 import { getAuthUrl, makeOAuthClient, isAllowedEmailDomain } from '../auth/google.js';
 import { createState, readState } from '../auth/oauthState.js';
@@ -218,14 +218,18 @@ router.get('/google/callback', asyncRoute(async (req, res) => {
     }
 
     if (!user) {
+      const superAdmin = isSuperAdminEmail(email);
       user = newUser({
         name: profile.name || email.split('@')[0],
         email,
         avatarUrl: profile.picture || null,
-        roleConfirmed: false,
+        role: superAdmin ? 'admin' : undefined,
+        roleConfirmed: superAdmin,
       });
       db.users.insert(user);
     }
+    if (isSuperAdminEmail(email) && (user.role !== 'admin' || !user.roleConfirmed))
+      user = db.users.update(user.id, { role: 'admin', roleConfirmed: true });
     if (user.disabled) return redirectToClient(res, { error: 'account_disabled' }, clientOrigin);
     if (user.googleId && user.googleId !== profile.id)
       return redirectToClient(res, { error: 'google_account_conflict' }, clientOrigin);

@@ -20,7 +20,13 @@ export default function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState(() => {
+    try {
+      const notice = sessionStorage.getItem('tracking_session_notice') || '';
+      sessionStorage.removeItem('tracking_session_notice');
+      return notice;
+    } catch { return ''; }
+  });
   const [busy, setBusy] = useState(false);
   const [google, setGoogle] = useState({ loading: true, configured: false, allowedDomain: null });
 
