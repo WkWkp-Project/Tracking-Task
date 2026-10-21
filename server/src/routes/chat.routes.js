@@ -4,7 +4,7 @@ import db from '../db.js';
 import { requireAuth, publicUser } from '../auth/jwt.js';
 import { canAccessDmChannel, dmChannelKey } from '../services/chat.js';
 import { saveMessage, decryptMessage, deleteMessage, emitMessage, emitDeleted } from '../realtime.js';
-import { notify } from '../services/notify.js';
+import { notify, notifyChatRecipients } from '../services/notify.js';
 import { config } from '../config.js';
 import { validateChatAttachment } from '../services/chatAttachments.js';
 
@@ -135,32 +135,7 @@ router.post('/messages', (req, res) => {
   });
   emitMessage(msg);
 
-  if (channelType === 'dm') {
-    const otherId = ck.split('::').find((id) => id !== req.user.id);
-    const other = db.users.byId(otherId);
-    if (other && !other.online) {
-      notify(otherId, {
-        type: 'chat',
-        title: `💬 ข้อความใหม่จาก ${req.user.name}`,
-        body: body.slice(0, 80),
-        link: `/chat/${ck}`,
-        meta: { channelKey: ck },
-      });
-    }
-  } else if (channelType === 'group') {
-    const group = db.groups.byId(ck.slice('group:'.length));
-    group?.memberIds.filter((id) => id !== req.user.id).forEach((id) => {
-      const member = db.users.byId(id);
-      if (member && !member.online) {
-        notify(id, {
-          type: 'chat',
-          title: `💬 ${req.user.name} ส่งข้อความในกลุ่ม "${group.name}"`,
-          body: body.slice(0, 80),
-          meta: { channelKey: ck },
-        });
-      }
-    });
-  }
+  notifyChatRecipients(msg, req.user.name);
   res.status(201).json({ message: msg });
 });
 
