@@ -93,7 +93,7 @@ export default function TeamModal({ open, onClose, onChanged }) {
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-600 mb-1">อีเมล (ใช้ login)</label>
-                <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required className="w-full p-2 border border-gray-300 rounded-lg text-sm" placeholder="user@wkwkp.com" />
+                <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required className="w-full p-2 border border-gray-300 rounded-lg text-sm" placeholder="user@team.wkwkp.com" />
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-600 mb-1 flex items-center gap-1"><KeyRound size={12} /> รหัสผ่าน</label>

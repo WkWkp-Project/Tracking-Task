@@ -60,12 +60,12 @@ npm start
 GOOGLE_CLIENT_ID=<ของคุณ>
 GOOGLE_CLIENT_SECRET=<ของคุณ>
 GOOGLE_REDIRECT_URI=http://localhost:4000/api/auth/google/callback
-ALLOWED_GOOGLE_DOMAIN=wkwkp.com     # จำกัดเฉพาะอีเมล @wkwkp.com (เว้นว่าง = ทุกโดเมน)
+ALLOWED_GOOGLE_DOMAIN=team.wkwkp.com     # จำกัดเฉพาะอีเมล @team.wkwkp.com (เว้นว่าง = ทุกโดเมน)
 ```
 
 ### ขั้นตอนใน Google Cloud Console
 1. สร้าง Project → เปิดใช้ API: **Gmail API**, **Google Calendar API**
-2. **OAuth consent screen**: เลือก Internal (ถ้าใช้ Workspace wkwkp.com) → เพิ่ม scope:
+2. **OAuth consent screen**: เลือก Internal (ถ้าใช้ Workspace team.wkwkp.com) → เพิ่ม scope:
    `gmail.send`, `calendar.events`, `userinfo.email`, `userinfo.profile`
 3. **Credentials → Create OAuth client ID → Web application**
    - Authorized redirect URI: `http://localhost:4000/api/auth/google/callback` (ต้องตรงเป๊ะ)

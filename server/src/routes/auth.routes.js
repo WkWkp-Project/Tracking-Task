@@ -5,7 +5,8 @@ import { google } from 'googleapis';
 import db from '../db.js';
 import { config, googleConfigured } from '../config.js';
 import { signToken, publicUser, requireAuth } from '../auth/jwt.js';
-import { getAuthUrl, makeOAuthClient } from '../auth/google.js';
+import { getAuthUrl, makeOAuthClient, isAllowedEmailDomain } from '../auth/google.js';
+import { createState, readState } from '../auth/oauthState.js';
 import { newUser, ROLES } from '../services/users.js';
 import { asyncRoute } from '../http.js';
 
@@ -13,7 +14,6 @@ const SELF_ROLES = ROLES.filter((role) => role !== 'admin');
 const OAUTH_STATE_COOKIE = 'tracking_google_oauth_state';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const LOGIN_CODE_TTL_MS = 60 * 1000;
-const pendingGoogleStates = new Map();
 const pendingLoginCodes = new Map();
 const failedLogins = new Map();
 const router = Router();
@@ -48,8 +48,6 @@ function recordLoginFailure(key) {
 
 function pruneOAuthEntries() {
   const now = Date.now();
-  for (const [key, value] of pendingGoogleStates)
-    if (value.expiresAt <= now) pendingGoogleStates.delete(key);
   for (const [key, value] of pendingLoginCodes)
     if (value.expiresAt <= now) pendingLoginCodes.delete(key);
 }
@@ -80,12 +78,7 @@ function googleCookieOptions() {
 }
 
 function beginGoogleFlow(res, details = {}) {
-  pruneOAuthEntries();
-  const state = crypto.randomBytes(32).toString('base64url');
-  pendingGoogleStates.set(state, {
-    ...details,
-    expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
-  });
+  const state = createState(details, OAUTH_STATE_TTL_MS);
   res.cookie(OAUTH_STATE_COOKIE, state, {
     ...googleCookieOptions(),
     maxAge: OAUTH_STATE_TTL_MS,
@@ -190,17 +183,15 @@ router.get('/google/callback', asyncRoute(async (req, res) => {
   const { code, error, state } = req.query;
   pruneOAuthEntries();
   const stateValue = String(state || '');
-  const pendingState = pendingGoogleStates.get(stateValue);
+  const pendingState = readState(stateValue);
   const clientOrigin = pendingState?.clientOrigin || config.clientOrigin;
   if (error || !code) {
-    pendingGoogleStates.delete(stateValue);
     res.clearCookie(OAUTH_STATE_COOKIE, googleCookieOptions());
     return redirectToClient(res, { error: error || 'no_code' }, clientOrigin);
   }
 
   try {
     const cookieState = readCookie(req, OAUTH_STATE_COOKIE);
-    pendingGoogleStates.delete(stateValue);
     res.clearCookie(OAUTH_STATE_COOKIE, googleCookieOptions());
     if (!pendingState || !stateMatches(stateValue, cookieState))
       return redirectToClient(res, { error: 'invalid_state' }, clientOrigin);
@@ -214,7 +205,7 @@ router.get('/google/callback', asyncRoute(async (req, res) => {
     const email = (profile.email || '').toLowerCase();
     if (!email || profile.verified_email !== true)
       return redirectToClient(res, { error: 'email_not_verified' }, clientOrigin);
-    if (config.google.allowedDomain && !email.endsWith(`@${config.google.allowedDomain}`))
+    if (!isAllowedEmailDomain(email, config.google.allowedDomain))
       return redirectToClient(res, { error: 'domain_not_allowed' }, clientOrigin);
 
     let user;
@@ -243,6 +234,9 @@ router.get('/google/callback', asyncRoute(async (req, res) => {
       googleId: profile.id,
       googleRefreshToken: tokens.refresh_token || user.googleRefreshToken || null,
       googleAccessToken: tokens.access_token || null,
+      // Google lets people untick Gmail/Calendar on the consent screen; remember
+      // what was really granted so the UI can explain instead of failing later.
+      googleScopes: tokens.scope ? String(tokens.scope) : user.googleScopes || null,
       avatarUrl: profile.picture || user.avatarUrl || null,
     });
 
