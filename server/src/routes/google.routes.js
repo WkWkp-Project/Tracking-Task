@@ -2,6 +2,7 @@ import { Router } from 'express';
 import db from '../db.js';
 import { requireAuth } from '../auth/jwt.js';
 import { googleConfigured } from '../config.js';
+import { GOOGLE_SCOPES, hasRequiredScopes } from '../auth/google.js';
 import { sendEmail } from '../services/gmail.js';
 import { calendarOwnerForTask, upsertTaskEvent, deleteTaskEvent } from '../services/calendar.js';
 import { notify } from '../services/notify.js';
@@ -15,6 +16,9 @@ router.get('/status', (req, res) => {
   res.json({
     configured: googleConfigured,
     linked: Boolean(req.user.googleRefreshToken),
+    // false when the person unticked Gmail/Calendar on Google's consent screen
+    // (null = unknown, e.g. linked before scopes were recorded)
+    scopesOk: req.user.googleScopes ? hasRequiredScopes(req.user.googleScopes, GOOGLE_SCOPES.filter((s) => s.includes('gmail') || s.includes('calendar'))) : null,
     email: req.user.email,
   });
 });

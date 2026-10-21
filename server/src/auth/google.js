@@ -13,6 +13,11 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/calendar.events',
 ];
 
+export function hasRequiredScopes(scopeString, needed) {
+  const granted = new Set(String(scopeString || '').split(/\s+/).filter(Boolean));
+  return needed.every((scope) => granted.has(scope));
+}
+
 export function makeOAuthClient() {
   return new google.auth.OAuth2(
     config.google.clientId,

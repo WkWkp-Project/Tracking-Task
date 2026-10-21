@@ -47,6 +47,9 @@ export function validateRuntimeConfig() {
   if (config.chatEncryptionKey === 'dev-insecure-chat-key-change-me')
     unsafe.push('CHAT_ENCRYPTION_KEY');
   if (config.admin.password === 'admin1234') unsafe.push('ADMIN_PASSWORD');
+  // Without a domain restriction any Google account can self-register and pick
+  // a role, so Google login must be locked to the organisation in production.
+  if (googleConfigured && !config.google.allowedDomain) unsafe.push('ALLOWED_GOOGLE_DOMAIN');
   if (unsafe.length) {
     throw new Error(
       `Refusing to start in production with insecure defaults: ${unsafe.join(', ')}`
