@@ -1,8 +1,9 @@
 // Deadline reminders.
-// For every active draft (phase) whose deadline is within the next 3 days and
-// still has remaining work, save one system message in the task assignee's
-// self-chat. Runs once per day at 10:00 in the configured reminder time
-// zone. Each phase is reminded at most once per calendar day in that zone.
+// Each unfinished draft (phase) is reminded in its assignee's self-chat at
+// four escalating tiers: 2 days, 1 day and 5 hours before the deadline, then
+// once when it is overdue. A tier is sent at most once per draft, and only
+// during working hours so nobody is pinged at night. A deadline date means
+// DEADLINE_HOUR:00 (end of the working day) in the configured time zone.
 
 import db from '../db.js';
 import { config } from '../config.js';
@@ -30,8 +31,30 @@ export function dayKeyInTimeZone(now, timeZone = config.reminderTimeZone) {
   return `${year}-${month}-${day}`;
 }
 
-export function isReminderHour(now, timeZone = config.reminderTimeZone) {
-  return Number(zonedParts(now, timeZone).hour) === 10;
+export const DEADLINE_HOUR = 18;
+export const WORK_START_HOUR = 9;
+const HOUR_MS = 3600000;
+
+// Ordered from earliest to latest trigger.
+export const REMINDER_TIERS = [
+  { key: 'T2d', hoursBefore: 48, label: 'เหลือ 2 วัน' },
+  { key: 'T1d', hoursBefore: 24, label: 'เหลือ 1 วัน' },
+  { key: 'T5h', hoursBefore: 5, label: 'เหลืออีกประมาณ 5 ชั่วโมง' },
+  { key: 'overdue', hoursBefore: 0, label: '🚨 เลยกำหนดส่งแล้ว' },
+];
+
+export function isWorkingHour(now, timeZone = config.reminderTimeZone) {
+  const hour = Number(zonedParts(now, timeZone).hour);
+  return hour >= WORK_START_HOUR && hour < DEADLINE_HOUR;
+}
+
+// The UTC instant at which `dateStr` (YYYY-MM-DD) is `hour`:00 in `timeZone`.
+export function zonedInstant(dateStr, hour, timeZone = config.reminderTimeZone) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const guess = Date.UTC(y, m - 1, d, hour);
+  const p = zonedParts(new Date(guess), timeZone);
+  const asIfUtc = Date.UTC(p.year, p.month - 1, p.day, Number(p.hour));
+  return new Date(guess - (asIfUtc - guess));
 }
 
 function calDaysLeft(deadline, todayKey) {
@@ -46,7 +69,6 @@ export function selectDeadlineReminders(
   force = false,
   timeZone = config.reminderTimeZone
 ) {
-  const today = dayKeyInTimeZone(now, timeZone);
   const usersById = new Map(users.map((user) => [user.id, user]));
   const draftsByTask = new Map();
   for (const draft of drafts) {
@@ -54,15 +76,20 @@ export function selectDeadlineReminders(
     rows.push(draft);
     draftsByTask.set(draft.taskId, rows);
   }
+  if (!isWorkingHour(now, timeZone)) return [];
   const reminders = [];
 
   for (const task of tasks.filter(
     (item) => !['Done', 'Cancelled', 'Archive'].includes(item.status)
   )) {
-    // Recipient selection is intentionally exact: only task.assigneeId.
-    // Project members, PMs, and unrelated users are never expanded here.
-    const assignee = usersById.get(task.assigneeId);
-    if (!assignee || assignee.disabled) continue;
+    // Recipient selection is intentionally exact: the task's lead assignee, or
+    // the task's own PM when nobody is assigned yet. Project members and
+    // unrelated users are never expanded here.
+    const lead = usersById.get(task.assigneeId);
+    const pm = usersById.get(task.pmId);
+    const assignee = lead && !lead.disabled ? lead : !task.assigneeId && pm && !pm.disabled ? pm : null;
+    if (!assignee) continue;
+    const unassigned = assignee !== lead;
     const taskDrafts = [...(draftsByTask.get(task.id) || [])].sort(
       (a, b) => a.order - b.order
     );
@@ -76,22 +103,31 @@ export function selectDeadlineReminders(
       if (remaining <= 0) continue;
 
       const deadline = draft.dueDate || task.endDate;
-      const daysLeft = calDaysLeft(deadline, today);
-      if (daysLeft < 0 || daysLeft > 3) continue;
+      const deadlineAt = zonedInstant(deadline, DEADLINE_HOUR, timeZone).getTime();
+      const crossed = REMINDER_TIERS.filter(
+        (tier) => deadlineAt - tier.hoursBefore * HOUR_MS <= now.getTime()
+      );
+      if (!crossed.length) continue;
+      // Only the most urgent tier reached is sent; earlier ones count as done.
+      const tier = crossed[crossed.length - 1];
+      const seen = draft.remindedTiers || [];
+      if (!force && seen.includes(tier.key)) continue;
+      // Don't nag about an almost-finished phase two days out.
+      if (tier.key === 'T2d' && remaining <= 1) continue;
 
-      const seen = draft.remindedDates || [];
-      if (!force && seen.includes(today)) continue;
-
-      const dueText = daysLeft === 0 ? 'วันนี้' : `อีก ${daysLeft} วัน`;
+      const hoursLeft = Math.max(0, Math.round((deadlineAt - now.getTime()) / HOUR_MS));
       const body =
-        `🤖 แจ้งเตือนอัตโนมัติ: เฟส "${draft.step}" ของงาน "${task.title}" ` +
-        `ใกล้กำหนดส่ง (${dueText} — ${deadline}) ยังเหลือ ~${remaining} ชม.`;
+        `⏰ ${tier.label}: เฟส "${draft.step}" ของงาน "${task.title}" ` +
+        `(กำหนดส่ง ${deadline} ${DEADLINE_HOUR}:00)` +
+        (unassigned ? ' [งานนี้ยังไม่มีผู้รับผิดชอบ — แจ้ง PM แทน] ' : ' ') +
+        `ยังเหลืองาน ~${remaining} ชม.` +
+        (tier.key === 'overdue' ? '' : ` · อีก ~${hoursLeft} ชม.ก่อนถึงกำหนด`);
       reminders.push({
         recipientId: assignee.id,
         task,
         draft,
-        today,
-        seen,
+        tier: tier.key,
+        seenTiers: [...new Set([...seen, ...crossed.map((item) => item.key)])],
         message: {
           senderId: assignee.id,
           channelType: 'dm',
@@ -108,8 +144,8 @@ export function selectDeadlineReminders(
   return reminders;
 }
 
-// force=true ignores the once-per-day dedupe, while the 3-day deadline window
-// remains in force. The admin endpoint uses this to preview eligible reminders.
+// force=true ignores the once-per-tier dedupe (the admin endpoint uses it to
+// preview what is currently due); the tier windows themselves still apply.
 export function runDeadlineReminders(now = new Date(), force = false) {
   const reminders = selectDeadlineReminders(
     {
@@ -124,31 +160,20 @@ export function runDeadlineReminders(now = new Date(), force = false) {
   for (const reminder of reminders) {
     const message = saveMessage(reminder.message);
     emitMessage(message);
-    db.drafts.update(reminder.draft.id, {
-      remindedDates: [...reminder.seen, reminder.today],
-    });
+    db.drafts.update(reminder.draft.id, { remindedTiers: reminder.seenTiers });
   }
   return reminders.length;
 }
 
-let lastTenAmDay = null;
+// Checked every few minutes so the 5-hour tier lands on time; each tier is
+// deduped per draft, so repeated checks never resend.
 export function startScheduler() {
   const tick = () => {
-    const now = new Date();
-    if (isReminderHour(now)) {
-      const key = dayKeyInTimeZone(now);
-      if (lastTenAmDay !== key) {
-        lastTenAmDay = key;
-        const sent = runDeadlineReminders(now);
-        if (sent)
-          console.log(
-            `[scheduler] sent ${sent} deadline reminder(s) at 10:00 ${config.reminderTimeZone}`
-          );
-      }
-    }
+    const sent = runDeadlineReminders(new Date());
+    if (sent) console.log(`[scheduler] sent ${sent} deadline reminder(s)`);
   };
-  setInterval(tick, 60 * 1000);
+  setInterval(tick, 5 * 60 * 1000);
   console.log(
-    `[scheduler] deadline-reminder scheduler started (fires daily at 10:00 ${config.reminderTimeZone})`
+    `[scheduler] deadline reminders at 2d / 1d / 5h / overdue (${config.reminderTimeZone}, ${WORK_START_HOUR}:00-${DEADLINE_HOUR}:00)`
   );
 }
