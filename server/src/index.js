@@ -81,11 +81,13 @@ server.listen(config.port, () => {
   console.log('');
 });
 
-function shutdown() {
-  console.log('\n[server] shutting down, flushing db...');
-  db.flush();
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 1000);
+async function shutdown() {
+  console.log('[server] shutting down, flushing db...');
+  const flushed = Promise.resolve(db.flush()).catch(() => {});
+  server.close();
+  // Postgres needs a moment to accept the final snapshot; the file store is instant.
+  await Promise.race([flushed, new Promise((resolve) => setTimeout(resolve, 5000))]);
+  process.exit(0);
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

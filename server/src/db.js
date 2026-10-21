@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { connectPgStore } from './pgStore.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // `node --test` sets NODE_TEST_CONTEXT in its child processes. Tests mutate the
@@ -71,7 +72,34 @@ export function parseDatabase(raw, source = 'database') {
   }
 }
 
-const state = load();
+// With DATABASE_URL (and not under `node --test`) the snapshot lives in Postgres
+// so it survives deploys on hosts with an ephemeral disk.
+const pgStore =
+  process.env.DATABASE_URL && !process.env.NODE_TEST_CONTEXT
+    ? await connectPgStore(process.env.DATABASE_URL)
+    : null;
+
+async function loadFromPg() {
+  const raw = await pgStore.load();
+  if (raw == null) {
+    await pgStore.save(JSON.stringify(EMPTY));
+    return structuredClone(EMPTY);
+  }
+  return parseDatabase(raw, 'the Postgres app_state row');
+}
+
+const state = pgStore ? await loadFromPg() : load();
+if (pgStore) console.log('[db] using Postgres storage (DATABASE_URL)');
+
+// Saves are chained so snapshots reach Postgres in order.
+let pgChain = Promise.resolve();
+function savePg() {
+  const raw = JSON.stringify(state);
+  pgChain = pgChain
+    .then(() => pgStore.save(raw))
+    .catch((err) => console.error('[db] postgres persist error:', err.message));
+  return pgChain;
+}
 
 let saveTimer = null;
 function persist() {
@@ -79,6 +107,7 @@ function persist() {
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
+    if (pgStore) { savePg(); return; }
     try {
       ensureDir();
       const tmp = DB_FILE + '.tmp';
@@ -90,12 +119,14 @@ function persist() {
   }, 50);
 }
 
-// Flush synchronously (used on shutdown)
+// Flush now (used on shutdown and after seeding). Returns a promise when the
+// store is Postgres, so callers that care (shutdown) can await it.
 export function flush() {
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
+  if (pgStore) return savePg();
   ensureDir();
   fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2));
 }
