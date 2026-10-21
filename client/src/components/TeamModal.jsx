@@ -6,12 +6,18 @@ import { ROLE_LABELS } from '../utils.js';
 import { useAuth } from '../context/AuthContext.jsx';
 
 const ROLE_OPTIONS = [
-  ['pm', 'Project Manager'],
-  ['creative', 'Creative / Art'],
-  ['copywriter', 'Copywriter'],
-  ['video', 'Video Editor'],
-  ['ae', 'Account Executive'],
-  ['admin', 'แอดมิน'],
+  ['pm', ROLE_LABELS.pm],
+  ['ae', ROLE_LABELS.ae],
+  ['art_director', ROLE_LABELS.art_director],
+  ['graphic', ROLE_LABELS.graphic],
+  ['creative', ROLE_LABELS.creative],
+  ['content_creator', ROLE_LABELS.content_creator],
+  ['copywriter', ROLE_LABELS.copywriter],
+  ['editor', ROLE_LABELS.editor],
+  ['video', ROLE_LABELS.video],
+  ['director', ROLE_LABELS.director],
+  ['producer', ROLE_LABELS.producer],
+  ['admin', 'Super Admin (แอดมิน)'],
 ];
 
 export default function TeamModal({ open, onClose, onChanged }) {

@@ -14,6 +14,14 @@ export function normalizeDomain(value) {
   return String(value || '').trim().toLowerCase().replace(/^@+/, '');
 }
 
+function emailList(value, fallback = []) {
+  const list = String(value || '')
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+  return list.length ? list : fallback;
+}
+
 // CLIENT_ORIGIN without a scheme ("tasks.example.com") makes res.redirect treat
 // it as a relative path and produce URLs like /api/auth/google/tasks.example.com/….
 // Add the scheme when it is missing and drop trailing slashes.
@@ -28,6 +36,8 @@ export function normalizeOrigin(value, fallback = '') {
 }
 
 export const config = {
+  // Accounts that are always super admins (role "admin"). Comma separated.
+  superAdminEmails: emailList(process.env.SUPER_ADMIN_EMAILS, ['jarupat@team.wkwkp.com']),
   // dedicated var first, then .env PORT, then default — never inherit a
   // stray PORT meant for the client.
   port: Number(process.env.SERVER_PORT || process.env.PORT) || 4000,
@@ -54,6 +64,10 @@ export const config = {
     allowedDomain: normalizeDomain(process.env.ALLOWED_GOOGLE_DOMAIN),
   },
 };
+
+export function isSuperAdminEmail(email) {
+  return config.superAdminEmails.includes(String(email || '').trim().toLowerCase());
+}
 
 export const googleConfigured = Boolean(
   config.google.clientId && config.google.clientSecret

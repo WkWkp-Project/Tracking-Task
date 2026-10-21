@@ -23,6 +23,19 @@ async function request(method, path, body) {
   const text = await res.text();
   try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
   if (!res.ok) {
+    // A valid token whose account no longer exists (database reset, account
+    // disabled) or an expired token: sign out cleanly instead of leaving the
+    // app half-working with "Account is unavailable" on every click.
+    if (res.status === 401 && token && ['ACCOUNT_UNAVAILABLE', 'UNAUTHORIZED'].includes(data?.code)) {
+      setToken(null);
+      try {
+        sessionStorage.setItem('tracking_session_notice',
+          data.code === 'ACCOUNT_UNAVAILABLE'
+            ? 'บัญชีนี้ไม่พร้อมใช้งานแล้ว (ถูกปิดหรือระบบรีเซ็ตข้อมูล) กรุณาเข้าสู่ระบบใหม่'
+            : 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+      } catch { /* storage unavailable */ }
+      if (!window.location.pathname.startsWith('/login')) window.location.assign('/login');
+    }
     const err = new Error(data?.error || `HTTP ${res.status}`);
     err.status = res.status;
     err.code = data?.code;
